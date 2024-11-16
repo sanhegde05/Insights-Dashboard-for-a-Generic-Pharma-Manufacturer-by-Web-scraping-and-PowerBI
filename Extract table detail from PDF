@@ -28,6 +28,13 @@ for i, table in enumerate(tables):
 table_final=pd.DataFrame()
 
 #might need some cleaning/transformation to the dataframe
-table_final.to_dataframe(C:\Users\Sanjaya.Hegde\Downloads\pharma_product.xlsx)
+for i in range (0, len(tables)):
+    print(tables[i])
+    table_final.append(tables[i])
+    table_final=pd.concat([table_final, tables[i]], axis=0,ignore_index=False)
+    
+table_final.drop('Unnamed: 0',inplace=True,axis=1)
+table_final.drop('Unnamed: 1',inplace=True,axis=1)
+table_final.to_excel(r'C:\Users\Sanjaya.Hegde\Downloads\Client_specific_Product_portfolio.xlsx')
 
 
