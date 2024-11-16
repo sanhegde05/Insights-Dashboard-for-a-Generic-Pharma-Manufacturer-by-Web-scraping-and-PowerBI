@@ -1,0 +1,63 @@
+'''
+This code can decide the region based on the 'site' location where the clinical trial is being conducted (clients were targeting only EU and INDIA)
+
+let's assume df is the final table contains the clinical study detail and Final_study is the excel for the same
+(the list of EU was given by the clients and verified with use of WHO website)
+'''
+
+#import the required module
+import pandas as pd
+
+#reading excel
+df=pd.read_excel('Final_study.xlsx',sheet_name=3)
+
+#countries of EU
+eu=eu=["Austria",
+"Belgium",
+"Bulgaria",
+"Croatia",
+"Republic of cyprus",
+"Czech Republic",
+"Denmark",
+"Estonia",
+"Finland",
+"France",
+"Germany",
+"Greece",
+"Hungary",
+"Ireland",
+"Italy",
+"Latvia",
+"Lithuania",
+"Luxembourg",
+"Malta",
+"Netherlands",
+"Poland ",
+"Portugal",
+"Romania",
+"Slovakia",
+"Slovenia",
+"Spain",
+"Sweden"]
+ 
+ind=['India']
+
+#new empty list
+l=[]
+import ast
+for i in range(len(df)):
+    print(i)        #just for checking
+    eu_present = any(element in eu for element in ast.literal_eval(df['Site'][i]))     #this will give 1 if present and 0 if not
+    ind_present= any(element in ind for element in ast.literal_eval(df['Site'][i]))
+    if eu_present and ind_present:
+        l.append('Both')
+    elif ind_present:
+        l.append('India')
+    elif eu_present:
+        l.append('Europe')
+
+#creates a new column with  'Region' to the existing excel
+df['Region'}=l
+
+#saving to destination excel
+df.to_excel(destination.xlsx)
