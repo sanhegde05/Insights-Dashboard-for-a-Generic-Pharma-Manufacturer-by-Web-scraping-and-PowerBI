@@ -1,0 +1,33 @@
+'''
+creating a column "Intervention_clean" with extracting molecular names from intervention column using find_drugs functiion of drug_named_entity_recognition
+Let's assume df_new is data which contains clinical trial details and has intervention column which has sentences where it contains molecule (drug names)
+'''
+
+#importing required modules
+import pandas as pd
+import time
+from nltk.tokenize import wordpunct_tokenize
+from drug_named_entity_recognition import find_drugs
+
+start_time = time.time() 
+df_new['Intervention']=df_new['Intervention'].fillna('')
+df_new['Intervention']= list(map(lambda x: x.replace('None','').replace('none','').replace('NONE',''),df_new['Intervention']))
+
+def drugs(x):
+    tokens = wordpunct_tokenize(x)
+    drug_names = set()
+    for result in find_drugs(tokens, is_ignore_case=True):
+        drug_names.add(result[0]['name'])
+    return drug_names
+df_new['Intervention_clean'] = df_new['Intervention'].apply(lambda x: drugs(x))
+         
+end_time = time.time()
+# Calculate and display the execution time
+print("Execution time:", end_time - start_time, "seconds")
+
+# cleaning the intervention column (it had {},Set(),'',Ciclosporin, Chloroquine(these were coming extra at random places where None was present, so removing that as well))
+df_new['Intervention_clean']= df_new['Intervention_clean'].astype(str)
+df_new['Intervention_clean']= list(map(lambda x: x.replace('{}','').replace('{','').replace('}','').replace("'",'').replace('Ciclosporin, Chloroquine','').replace('Chloroquine, Ciclosporin','').replace(', ,',',').replace(',,',',').replace('set()','').replace('Chloroquine','').replace('Ciclosporin','').replace('Isoxaflutole',''),df_new['Intervention_clean']))
+df_new['Intervention_clean']= list(map(lambda x: x.strip(),df_new['Intervention_clean']))
+df_new['Intervention_clean']= list(map(lambda x: x.strip(','),df_new['Intervention_clean']))
+
