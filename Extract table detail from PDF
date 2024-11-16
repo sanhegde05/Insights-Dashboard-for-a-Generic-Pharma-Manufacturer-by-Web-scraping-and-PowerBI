@@ -1,0 +1,33 @@
+'''
+below code is for extracting the table of products of the pdf file which is downloaded from the Client_specific(RECA) website: 
+(https://www.Client_specific(RECA).eu/our-products/pharmaceutical-products/)
+'''
+
+#importing required pckages
+import tabula
+import pandas as pd
+
+# Specify the path to your PDF file
+pdf_path = r'C:\Users\Sanjaya.Hegde\Downloads\Client_specific - Pharmaceutical Products (EN).pdf'
+
+# Use tabula to extract tables
+tables = tabula.read_pdf(pdf_path, pages='all', multiple_tables=True)
+
+# Iterate through the extracted tables
+for i, table in enumerate(tables):
+    Display the table
+    print(f"Table {i + 1}:")
+    print(table)
+    print(table.columns)
+    print(len(table.columns))
+    tables1 = table.iloc[:, :]
+    print(tables)
+    print("\n")
+    print('='*80)
+    
+table_final=pd.DataFrame()
+
+#might need some cleaning/transformation to the dataframe
+table_final.to_dataframe(C:\Users\Sanjaya.Hegde\Downloads\pharma_product.xlsx)
+
+
