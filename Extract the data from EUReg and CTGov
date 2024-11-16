@@ -1,0 +1,1614 @@
+'''
+This is updated version with EU Clinical Registry as well as CT.GOV:
+
+This code takes CRO (Clinical Research Organization) names from an excel and search the same in EU Clinical registry and extract the related information of Clinical trials which the CROs are conducting and creates an excel with all the required fields
+Let's assume we have CRO list in an excel CRO_list_excel_path and it has 'Europe' sheet, 'Name of CRO' is the column name
+'''
+
+#!/usr/bin/env python
+# coding: utf-8
+
+# Main Sections
+#    1. [EUReg Data Extraction](#EUReg-Data-Extraction) \
+#    2. [CTGov Data Extraction](#CTGov-Data-Extraction) \
+#    3. [Merging EUReg and CTGov Extracted data](#Merging-EUReg-and-CTGov-Extracted-data) \
+#    4. [Creating New column Region](#Creating-New-column-Region) \
+#    5. [Reading Client_specific Portfolio of Drugs](#Reading-Client-Portfolio-of-Drugs) \
+#    6. [Saving the Final File](#Saving-the-Final-File) \
+
+
+# # EUReg Data Extraction
+# This Section contains the EUReg Extraction code
+
+
+#importing required modules and assigning variables which will be used in further steps
+
+import datetime
+from datetime import timedelta
+start_time = str(datetime.datetime.now())
+
+import time
+import os
+import re
+import pandas as pd
+import warnings
+global final_df
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import Select 
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+warnings.filterwarnings("ignore")
+pd.set_option ('display.max_columns', 200) 
+pd.set_option ('display.max_rows', 200) 
+final_df = pd.DataFrame()
+
+#change the paths according to your environment
+plain_text_file_path= r"C:\Users\Sanjaya.Hegde\Downloads\trials-full.txt"
+CRO_list_excel_path= r"C:\Users\Sanjaya.Hegde\Downloads\Updated CRO's India & Europe 2.xlsx"
+download_folder= r"C:\\Users\\Sanjaya.Hegde\\Downloads"
+
+#cro list which are different in excel and clinical registry
+cro_list1= ['medpace','National Perinatal Epidemiology unit', 'PPD', 'VOISIN CONSULTING', 'SanaClis', 'Richmond Pharmacology', 'Premier Research', 'CLININFO', 'INSERM', 'PPD by Thermo Fisher','A+ Science AB', 'Clinica Group', 'Clinigen Clinical Supplies Management', 'Clininfo', 'PPD by Thermo Fisher Scientific', 'PSI CRO', 'SCOPE INTERNATIONAL','Adelphi Targis','Advanced Clinical','AKRN scientific Consulting','ARN Healthcare','Bioclever CRO','Cabyc','Charles River Laboratories','Clintec','CTI Clinical Trial and Consulting Services','Distefar','Dynamic Solutions','East Horn Clinical Services','Effice Research','Ergomed','Evidence Clinical Research','EXPERIOR','GCPs','Geistek pharma','Icon plc','INC/Syneos Health','Kymos','Labcorp Drug Development (Before Covance)','Leon Research','Linical Co.','Meditrial','OPIS s.r.l.','Optimapharm','Oxon Epidemiology','Pivotal','PRA','PRA Health Sciences is now an ICON plc company','Psyncro','QualitecFarma','RegPharmaClin','RTI health Solutions','Sermes CRO','SFS CRO','Sofpromed','Synteract','TFS','Ypsilon CRO','Zurko Research',
+           'Consorzio per Valutazioni Biologiche e Farmacologiche (CVBF)','Donawa Lifescience Consulting','GB Pharma','Hippocrates Research srl','Medi Service','Axonal-Biostatem','Caidya','Charles River Laboratories','Dokumeds','Simbec-Orion','Biomay','CW-Research & Management GmbH','E&E CRO Consulting','ZAK','Data Investigation Company Europe (DICE)','KasaConsult','Research Drive B.V.','HEMEX AG','Medidee','Bulgarian Association of Clinical Research (BACR)','Clinres Farmacija','EastHORN Clinical Services','Global Clinical Trials','Emmes','aCROnordic ApS','MAC Clinical Research®','Smerud Medical Research Group','Crown CRO','Clin4all','Eurofins Optimed','ExperTrials','International Clinical Trials Association (ICTA)','TRIO','AICROS','Biocard Research','Bioskin','CCDRD','Inamed','IST','P.R.I.S.M.A.','proDERM','Therapyte','FGK Clinical Research','Argint International Clinical Research and Development Services (Argint)','BiTrial Clinical Research','HungaroTrial','Szasz&Co. Bt','Cromos Pharma','Atlantia Clinical Trials','Medfiles','Comac Medical','Research Drive B.V.','MTZ Clinical Research','Blueclinical','VectorB2B','BiTrial Clinical Research','SMP','Clinres Farmacija','Cmed']
+
+#cro list from excel file, change the sheet name and column name according to your used case
+ref_df2= pd.read_excel(CRO_list_excel_path,sheet_name = 'CRO_Contacts')
+cro_list2 = ref_df2['CRO Name'].values.tolist()
+
+#cro_list contains all the CRO lists which we want to download text file from EU clinical registry
+cro_list= [*cro_list1, *cro_list2]
+print("Total CRO lists to be searched: " +str(len(cro_list)))
+
+cro_list
+
+
+b=list(map(lambda x: x.lower(), cro_list))
+a=set(b)
+cro_list=list(a)
+print(len(cro_list))
+cro_list
+
+
+
+
+#iterating over all the elements of a CRO list
+for var1 in cro_list:
+    #arr contains all the file in the specified folder
+    arr = os.listdir(download_folder)
+    if 'trials-full.txt' in arr:
+        os.remove(plain_text_file_path)  #removing the text file if it is already present
+    print("="*50)
+    print("Downloading and reading the CRO: "+str(var1)+"'s data'")
+
+#step-1: Downloading the text file with Searching for the CRO Names  
+    try:
+        driver = webdriver.Chrome()
+        driver.get("https://www.clinicaltrialsregister.eu/ctr-search/search")
+        title = driver.title
+        driver.implicitly_wait(0.5)
+        
+        search_box = driver.find_element(by=By.NAME, value="query")  #Finding the text box by Name (You can get these info using Developer tool in browser and check for the particular elements)
+        button1 = driver.find_element(By.ID, 'submitbutton')         #Finding the Search button by ID
+
+        search_box.send_keys(var1)                                   #putting the data of var1 in search box
+        button1.click()                                              #clicking the search button
+
+        drop1 = driver.find_element(By.ID,"dContent")                #Finding dropdown
+        select = Select(drop1) 
+        select.select_by_value('full')                               #select a dropdown
+
+        button2 = driver.find_element(By.ID, 'submit-download') 
+        button2.click()
+        time.sleep(30)    #adding a 60 seconds delay
+        driver.quit()
+    except Exception as e:
+        print("Error while downloading the excel (Data may not be available, Please check for the CRO:"+str(var1)+" in clinicaltrialsregister.eu)")
+        driver.quit()
+        continue
+        
+#step-2: Reading the text file which we downloaded
+    arr2 = os.listdir(download_folder)
+    if 'trials-full.txt' in arr2:
+        with open(plain_text_file_path, encoding="utf8") as f:
+            full_text = f.read()
+            
+    #step-3: Counting the number of trials in the file, which is used in for loop
+        count1 = full_text.count('End of Trial Status:')
+        print("Total count of Trial details in the text file: " +str(count1))
+
+    #step-4: Iterating the whole text file
+        for i in range (0,count1):
+            dict1={}
+            temp_dict={}
+            print("This is "+str(i+1)+"th entry for CRO: "+str(var1))
+            start1= 0
+            end1 = full_text.find('''End of Trial Status:''')
+
+            #here sub_text is part of 1 trial (which means from starting to 'End of Trial Status:' contains the entire information of the entry)
+            sub_text = full_text[start1:end1+80]
+            sub_text
+
+            #Checking if CRO name is present in Sponsor details
+            var2= var1.upper()
+            sub_text2 = sub_text.upper()
+
+            start12 = sub_text2.find('B. SPONSOR INFORMATION')
+            end12 = sub_text2.find('D. IMP IDENT')
+            sub_text3= sub_text2[start12:end12]
+
+            start12 = sub_text2.find('G. INVESTIGATOR NETWORKS TO BE INVOLVED IN THE TRIAL')
+            end12 = sub_text2.find('N. REVIEW')
+            sub_text4= sub_text2[start12:end12]        
+
+            if var2 in sub_text3 or var2 in sub_text4:    #check if CRO Name is present or not
+                dict1['CRO Name']=var1
+
+                #find the index of starting point of 'A.2 EudraCT number:' 
+                start2 = sub_text.find('A.2 EudraCT number:') + len ('A.2 EudraCT number:')+1
+                #find the index of starting of 'A.3 Full title of the trial:'
+                end2= sub_text.find ('''A.3 Full title of the trial:''')-1
+                #temp contains the value between 'A.2 EudraCT number:' to 'A.3 Full title of the trial:' which is nothin but the value of 'EudraCT Number'
+                temp= sub_text[start2:end2]          #string slashing (temp is the text between start and end insdexes)
+                #saving the 'EudraCT Number' as key and 'temp' as value in the dict1 dictionary
+                dict1['EudraCT Number'] = temp       #here 'EudraCT Number' is a column name in final_df with 'temp' as value
+
+                #finding Sponsor details
+                if 'B.1.1 Name of Sponsor:' in sub_text:
+                    start2 = sub_text.find('B.1.1 Name of Sponsor:') + len ('B.1.1 Name of Sponsor:')+1
+                    end2= sub_text.find ('''B.1.3.4	Country''')-1
+                    temp= sub_text[start2:end2]
+                    temp = temp.rstrip("\n")
+                    dict1['Sponsor'] = temp
+                
+                #finding organisation providing support
+                if 'B.4.1 Name of organisation providing support:' in sub_text and 'B.4.1 Name of organisation providing support:\n' not in sub_text:
+                    start2 = sub_text.find('B.4.1 Name of organisation providing support:') + len ('B.4.1 Name of organisation providing support:')+1
+                    temp= sub_text[start2:]
+                    end2 = temp.find('\n')
+                    temp= temp[:end2]
+                    temp = temp.rstrip("\n")
+                    dict1['Organisation providing support'] = temp
+                
+                #finding name of organisation
+                if 'B.5.1 Name of organisation:' in sub_text and 'B.5.1 Name of organisation:\n' not in sub_text:
+                    start2 = sub_text.find('B.5.1 Name of organisation:') + len ('B.5.1 Name of organisation:')+1
+                    temp= sub_text[start2:]
+                    end2 = temp.find('\n')
+                    temp= temp[:end2]
+                    temp = temp.rstrip("\n")
+                    dict1['Name of organisation'] = temp
+
+                #finding Contract name 
+                if 'B.5.2 Functional name of contact point:' in sub_text and 'B.5.2 Functional name of contact point:\n' not in sub_text:
+                    start2 = sub_text.find('B.5.2 Functional name of contact point:') + len ('B.5.2 Functional name of contact point:')+1
+                    temp= sub_text[start2:]
+                    end2 = temp.find('\n')
+                    temp= temp[:end2]
+                    temp = temp.rstrip("\n")
+                    dict1['Functional name of contact point'] = temp
+
+                #finding Member state concerned 
+                if 'A.1 Member State Concerned:' in sub_text and 'A.1 Member State Concerned:\n' not in sub_text:
+                    start2 = sub_text.find('A.1 Member State Concerned:') + len ('A.1 Member State Concerned:')+1
+                    temp= sub_text[start2:]
+                    end2 = temp.find('\n')
+                    temp= temp[:end2]
+                    temp = temp.rstrip("\n")
+                    dict1['Member State Concerned'] = temp
+
+                #Collecting all IMP roles in a list
+                IMP_Role_list=[]
+                count7 = sub_text.count('D.1.2 and D.1.3 IMP Role:')
+                for m in range (0,count7):
+                    start2 = sub_text.find('D.1.2 and D.1.3 IMP Role:') + len ('D.1.2 and D.1.3 IMP Role:')+1
+                    temp= sub_text[start2:]
+                    end3= temp.find ('\n')
+                    temp= temp[:end3]
+                    temp = temp.rstrip("\n")
+                    temp = temp.rstrip(" ")
+                    IMP_Role_list.append(temp)
+                    sub_text = sub_text.replace('D.1.2 and D.1.3 IMP Role:','',1)
+                dict1['IMP Role']= str(IMP_Role_list)
+
+                
+                #Collecting all mode of adm in a list
+                Mode_of_adm_list=[]
+                count8 = sub_text.count('D.3.7 Routes of administration for this IMP:')
+                for m in range (0,count8):
+                    start2 = sub_text.find('D.3.7 Routes of administration for this IMP:') + len ('D.3.7 Routes of administration for this IMP:')+1
+                    temp= sub_text[start2:]
+                    end3= temp.find ('\n')
+                    temp= temp[:end3]
+                    temp = temp.rstrip("\n")
+                    temp = temp.rstrip(" ")
+                    Mode_of_adm_list.append(temp)
+                    sub_text = sub_text.replace('D.3.7 Routes of administration for this IMP:','',1)
+                dict1['Mode of Administration']= str(Mode_of_adm_list)
+
+                #Collecting all INN, ConcUnit and ConcNumber in a list
+                count3= sub_text.count('D.3.8 INN - Proposed INN:')
+                INN_list = []
+                INN_list2 = []
+                Conc_unit_list =[]
+                Conc_number_list=[]
+                for j in range (0,count3):
+                    if 'D.3.8 INN - Proposed INN:' in sub_text:
+                        start2 = sub_text.find('D.3.8 INN - Proposed INN:') + len ('D.3.8 INN - Proposed INN:')+1
+                        temp= sub_text[start2:]
+                        end3= temp.find ('\n')
+                        temp= temp[:end3]
+                        temp = temp.rstrip("\n")
+                        temp = temp.rstrip(" ")
+                        INN_list.append(temp)
+
+                        start2 = sub_text.find('D.3.10.1 Concentration unit:') + len ('D.3.10.1 Concentration unit:')+1
+                        temp= sub_text[start2:]
+                        end3= temp.find ('\n')
+                        temp= temp[:end3]
+                        temp = temp.rstrip("\n")
+                        temp = temp.rstrip(" ")
+                        Conc_unit_list.append(temp)
+
+                        start2 = sub_text.find('D.3.10.3 Concentration number:') + len ('D.3.10.3 Concentration number:')+1
+                        temp= sub_text[start2:]
+                        end3= temp.find ('\n')
+                        temp= temp[:end3]
+                        temp = temp.rstrip("\n")
+                        temp = temp.rstrip(" ")
+                        Conc_number_list.append(temp)
+
+                        sub_text = sub_text.replace('D.3.8 INN - Proposed INN:','',1)
+                        sub_text = sub_text.replace('D.3.10.1 Concentration unit:','',1)
+                        sub_text = sub_text.replace('D.3.10.3 Concentration number:','',1)
+
+                dict1['Proposed INN']= str(INN_list).replace('[]','')
+                dict1['Concentration Number']= str(Conc_number_list).replace('[]','')
+                dict1['Concentration Unit']= str(Conc_unit_list).replace('[]','')
+                INN_list2 = INN_list
+                
+                #finding other descriptive name
+                Other_descr_name_list=[]
+                count9 = sub_text.count('D.3.9.3 Other descriptive name:')
+                for o in range (0,count9):
+                    start2 = sub_text.find('D.3.9.3 Other descriptive name:') + len ('D.3.9.3 Other descriptive name:')+1
+                    temp= sub_text[start2:]
+                    end3= temp.find ('\n')
+                    temp= temp[:end3]
+                    temp = temp.rstrip("\n")
+                    temp = temp.rstrip(" ")
+                    Other_descr_name_list.append(temp)
+                    sub_text = sub_text.replace('D.3.9.3 Other descriptive name:','',1)
+                dict1['Other Descriptive Name']= str(Other_descr_name_list).replace('[]','')
+
+                count5 = sub_text.count('D.3.10.1 Concentration unit:')
+                if len(Conc_unit_list) == 0:
+                    for l in range (0,count5):
+                        start2 = sub_text.find('D.3.10.1 Concentration unit:') + len ('D.3.10.1 Concentration unit:')+1
+                        temp= sub_text[start2:]
+                        end3= temp.find ('\n')
+                        temp= temp[:end3]
+                        temp = temp.rstrip("\n")
+                        temp = temp.rstrip(" ")
+                        Conc_unit_list.append(temp)
+                        sub_text = sub_text.replace('D.3.10.1 Concentration unit:','',1)
+                    dict1['Concentration Unit']= str(Conc_unit_list).replace('[]','')
+
+                count6 = sub_text.count('D.3.10.3 Concentration number:')
+                if len(Conc_number_list) == 0:
+                    for m in range (0,count6):
+                        start2 = sub_text.find('D.3.10.3 Concentration number:') + len ('D.3.10.3 Concentration number:')+1
+                        temp= sub_text[start2:]
+                        end3= temp.find ('\n')
+                        temp= temp[:end3]
+                        temp = temp.rstrip("\n")
+                        temp = temp.rstrip(" ")
+                        Conc_number_list.append(temp)
+                        sub_text = sub_text.replace('D.3.10.3 Concentration number:','',1)
+                    dict1['Concentration Number']= str(Conc_number_list).replace('[]','')
+
+                    
+                #checking Product code and Names if Proposed INN list is empty
+                Prod_list =[]
+                Prod_list2 = []
+                Prod_list3= []
+                Prod_list4 = []
+                if dict1['Proposed INN']=='[]' or (len(IMP_Role_list) != len(INN_list)) or dict1['Proposed INN']=='' or dict1['Proposed INN']=='' or 'n/a' in str(dict1['Proposed INN']) or 'N.A.' in str(dict1['Proposed INN']) or 'NA' in str(dict1['Proposed INN']) or 'N/A' in str(dict1['Proposed INN']) or 'N/a' in str(dict1['Proposed INN']) or 'assigned yet' in str(dict1['Proposed INN']) or 'established' in str(dict1['Proposed INN']) or 'yet assigned' in str(dict1['Proposed INN']) or 'available' in str(dict1['Proposed INN']) or '[-' in str(dict1['Proposed INN']):
+                    count4= sub_text.count('D.3.1 Product name:')
+                    Prod_list = []
+                    for j in range (0,count4):
+                        if 'D.3.1 Product name:' in sub_text and 'D.3.1 Product name:\n' not in sub_text:
+                            start2 = sub_text.find('D.3.1 Product name:') + len ('D.3.1 Product name:')+1
+                            temp= sub_text[start2:]
+                            end3= temp.find ('\n')
+                            temp= temp[:end3]
+                            temp = temp.rstrip("\n")
+                            temp = temp.rstrip(" ")
+                            temp = temp.rstrip("-")
+                            Prod_list.append(temp)
+                            Prod_list2.append(temp)
+                            sub_text=sub_text.replace('D.3.1 Product name:','',1)
+                    dict1['Proposed INN'] = str(Prod_list).replace('[]','')
+
+                if dict1['Proposed INN']=='[]' or (len(IMP_Role_list) != len(INN_list)) or dict1['Proposed INN']=='' or dict1['Proposed INN']=='' or 'n/a' in str(dict1['Proposed INN']) or 'N.A.' in str(dict1['Proposed INN']) or 'NA' in str(dict1['Proposed INN']) or 'N/A' in str(dict1['Proposed INN']) or 'N/a' in str(dict1['Proposed INN']) or 'assigned yet' in str(dict1['Proposed INN']) or 'established' in str(dict1['Proposed INN']) or 'yet assigned' in str(dict1['Proposed INN']) or 'available' in str(dict1['Proposed INN']) or '[-' in str(dict1['Proposed INN']) :
+                    count4= sub_text.count('D.3.2 Product code:')
+                    Prod_list = []
+                    for j in range (0,count4):
+                        if 'D.3.2 Product code:' in sub_text and 'D.3.2 Product code:\n' not in sub_text:
+                            start2 = sub_text.find('D.3.2 Product code:') + len ('D.3.2 Product code:')+1
+                            temp= sub_text[start2:]
+                            end3= temp.find ('\n')
+                            temp= temp[:end3]
+                            temp = temp.rstrip("\n")
+                            temp = temp.rstrip(" ")
+                            Prod_list.append(temp)
+                            Prod_list3.append(temp)
+                            sub_text=sub_text.replace('D.3.2 Product code:','',1)
+                            
+                if dict1['Proposed INN']=='[]' or (len(IMP_Role_list) != len(INN_list)) or dict1['Proposed INN']=='' or dict1['Proposed INN']=='' or 'n/a' in str(dict1['Proposed INN']) or 'N.A.' in str(dict1['Proposed INN']) or 'NA' in str(dict1['Proposed INN']) or 'N/A' in str(dict1['Proposed INN']) or 'N/a' in str(dict1['Proposed INN']) or 'assigned yet' in str(dict1['Proposed INN']) or 'established' in str(dict1['Proposed INN']) or 'yet assigned' in str(dict1['Proposed INN']) or 'available' in str(dict1['Proposed INN']) or '[-' in str(dict1['Proposed INN']) :
+                    count5= sub_text.count('D.3.9.4 EV Substance Code:')
+                    Prod_list = []
+                    for j in range (0,count5):
+                        if 'D.3.9.4 EV Substance Code:' in sub_text and 'D.3.9.4 EV Substance Code:\n' not in sub_text:
+                            start2 = sub_text.find('D.3.9.4 EV Substance Code:') + len ('D.3.9.4 EV Substance Code:')+1
+                            temp= sub_text[start2:]
+                            end3= temp.find ('\n')
+                            temp= temp[:end3]
+                            temp = temp.rstrip("\n")
+                            temp = temp.rstrip(" ")
+                            Prod_list.append(temp)
+                            Prod_list4.append(temp)
+                            sub_text=sub_text.replace('D.3.9.4 EV Substance Code:','',1)
+                            
+                    #checking if all the products have been captured
+                    if len(Prod_list) >= len(IMP_Role_list):
+                        dict1['Proposed INN'] = str(Prod_list).replace('[]','')
+                        INN_list=[]
+                        
+                    else:
+                        INN_list=[]
+                        check_list=['N/A','n/a','NA','N/a', 'not assigned', 'Not Assigned','Non established', 'Not assigned yet', 'not established yet', 'Not available', 'Not Available', 'N.A.','-', 'not assigned yet' , 'Not assigned yet','Not yet assigned','not applicaple','Not available yet','not assigned yet']
+                        for check1 in check_list:
+                            if check1 in INN_list2:
+                                try:
+                                    INN_list2.remove(check1)
+                                except:
+                                    print('abc')
+                        
+                        
+                        if (len(INN_list2)+len(Prod_list)) == len(IMP_Role_list):
+                            Prod_list= [*INN_list2,*Prod_list]
+                            dict1['Proposed INN'] = str(Prod_list).replace('[]','')
+                        elif (len(Prod_list2)) == len(IMP_Role_list):
+                            Prod_list= Prod_list2
+                            dict1['Proposed INN'] = str(Prod_list2).replace('[]','')
+                        elif (len(Prod_list3)) == len(IMP_Role_list):
+                            Prod_list= Prod_list3
+                            dict1['Proposed INN'] = str(Prod_list3).replace('[]','')
+                            print(Prod_list)
+                        elif (len(Prod_list4)) == len(IMP_Role_list):
+                            Prod_list= Prod_list4
+                            dict1['Proposed INN'] = str(Prod_list4).replace('[]','')
+                            
+                        elif (len(INN_list2)+len(Prod_list2)) == len(IMP_Role_list):
+                            Prod_list= [*INN_list2,*Prod_list2]
+                            dict1['Proposed INN'] = str(Prod_list).replace('[]','')
+                            print(Prod_list)
+                        elif (len(INN_list2)+len(Prod_list3)) == len(IMP_Role_list):
+                            Prod_list= [*INN_list2,*Prod_list3]
+                            dict1['Proposed INN'] = str(Prod_list).replace('[]','')
+                            print(Prod_list)
+                        elif (len(INN_list2)+len(Prod_list4)) == len(IMP_Role_list):
+                            Prod_list= [*INN_list2,*Prod_list4]
+                            dict1['Proposed INN'] = str(Prod_list).replace('[]','')
+                            print(Prod_list)
+                            
+                        elif (len(Prod_list2)+len(Prod_list3)) == len(IMP_Role_list):
+                            Prod_list= [*Prod_list2,*Prod_list3]
+                            dict1['Proposed INN'] = str(Prod_list).replace('[]','')
+                        elif (len(Prod_list2)+len(Prod_list4)) == len(IMP_Role_list):
+                            Prod_list= [*Prod_list2,*Prod_list4]
+                            dict1['Proposed INN'] = str(Prod_list).replace('[]','')
+                        elif (len(Prod_list3)+len(Prod_list4)) == len(IMP_Role_list):
+                            Prod_list= [*Prod_list3,*Prod_list4]
+                            dict1['Proposed INN'] = str(Prod_list).replace('[]','')
+                            
+                        else:
+                            dict1['Proposed INN'] = str(Prod_list).replace('[]','')
+                            
+
+                intervention_text=''
+                Comp_text=''
+                i1=0
+                i2=0
+                try:
+                    count_list1 = len(INN_list)
+                    if count_list1 !=0:
+                        for v in range (0, count_list1):
+                            temp1=''
+                            temp2=''
+                            temp3=''
+                            temp4=''
+                            temp1= INN_list[v]
+                            if len (INN_list) == len (Conc_number_list):
+                                temp2= Conc_number_list[v]
+                            if len (INN_list) == len (Conc_unit_list):
+                                temp3= Conc_unit_list[v]
+                            if v <= len(Mode_of_adm_list):
+                                temp4= Mode_of_adm_list[v]
+                            if v <= len(IMP_Role_list):
+                                if IMP_Role_list[v]=='Test': 
+                                    i1+=1
+                                    intervention_text = intervention_text+ "Drug "+str(i1)+ ": " + str(temp1) + ", " +str(temp2) + " "+ str(temp3) + " (" + str(temp4) + ") |"
+                                else:
+                                    i2+=1
+                                    Comp_text =  Comp_text+ "Drug "+str(i2)+ ": " + str(temp1) + ", " +str(temp2) + " "+ str(temp3) + " (" + str(temp4) + ") |"     
+                            else:
+                                intervention_text = intervention_text+ "Drug "+str(i1)+ ": " + str(temp1) + " (" + str(temp4) + ") |"
+                                i1+=1
+                    else:
+                        count_list2 = len(Prod_list)
+                        for v in range(0,count_list2):
+                            temp1=''
+                            temp2=''
+                            temp3=''
+                            temp4=''
+                            temp1= Prod_list[v]
+                            if len (Prod_list) == len (Conc_number_list):
+                                temp2= Conc_number_list[v]
+                            if len (Prod_list) == len (Conc_unit_list):
+                                temp3= Conc_unit_list[v]
+                            if v <= len(Mode_of_adm_list):
+                                temp4= Mode_of_adm_list[v]
+                            if temp2!='':
+                                if v <= len(IMP_Role_list):
+                                    if IMP_Role_list[v]=='Test':
+                                        i1+=1
+                                        intervention_text = intervention_text+ "Drug "+str(i1)+ ": " + str(temp1) + ", " +str(temp2) + " "+ str(temp3) + " (" + str(temp4) + ") |"
+                                    else:
+                                        i2+=1
+                                        Comp_text = Comp_text+ "Drug "+str(i2)+ ": " + str(temp1) + ", " +str(temp2) + " "+ str(temp3) + " (" + str(temp4) + ") |"
+                                else:
+                                    intervention_text = intervention_text+ "Drug "+str(i1)+ ": " + str(temp1) + ", " +str(temp2) + " "+ str(temp3) + " (" + str(temp4) + ") |"
+                                    i1+=1
+                                
+                            else:
+                                if v <= len(IMP_Role_list):
+                                    if IMP_Role_list[v]=='Test':
+                                        i1+=1
+                                        intervention_text = intervention_text+ "Drug "+str(i1)+ ": " + str(temp1) + " (" + str(temp4) + ") |"
+                                    else:
+                                        i2+=1
+                                        Comp_text = Comp_text + "Drug "+str(i2)+ ": " + str(temp1) + " (" + str(temp4) + ") |"
+                                else:
+                                    intervention_text = intervention_text+ "Drug "+str(i1)+ ": " + str(temp1) + " (" + str(temp4) + ") |"
+                                    i1+=1
+  
+                    intervention_text= intervention_text.rstrip(" ")
+                    Comp_text=Comp_text.rstrip(" ")
+                    intervention_text= intervention_text.rstrip("|")
+                    Comp_text=Comp_text.rstrip("|")
+           
+
+                except Exception as e:
+                    print("Error in intervention text making: " + str(e))
+
+                count2 = sub_text.count('D.8 Placebo: ')
+                placebo_info=''
+                for v in range(1,count2+1):
+                    if (v==count2):
+                        start2 = sub_text.find('D.8 Placebo: '+str(count2)) + len ('D.8 Placebo: '+str(v))
+                        end2 = sub_text.find ('E. General Information')-1
+                        temp= sub_text[start2:end2]
+                        temp = temp.rstrip("\n")
+                        temp= "Placebo "+str(v)+": "+temp
+                        temp= temp.replace('D.8.1 Is a Placebo used in this Trial? Yes','')
+                        temp= temp.replace('D.8.1 Is a Placebo used in this Trial? No','')
+                        temp= temp.replace('D.8.3 Pharmaceutical form of the placebo: ','')
+                        temp= temp.replace('\nD.8.4 Route of administration of the placebo: ','(')
+                        temp= temp+str(')')
+                        temp= temp.replace('\n','')
+                        placebo_info= placebo_info+temp
+
+                    elif (v<count2):
+                        start2 = sub_text.find('D.8 Placebo: '+str(v)) + len ('D.8 Placebo: '+str(v))
+                        end2= sub_text.find ('D.8 Placebo: '+str(v+1))-1
+                        temp= sub_text[start2:end2]
+                        temp = temp.rstrip("\n")
+                        temp= "Placebo "+str(v)+": "+temp
+                        temp= temp.replace('D.8.1 Is a Placebo used in this Trial? Yes','')
+                        temp= temp.replace('D.8.1 Is a Placebo used in this Trial? No','')
+                        temp= temp.replace('D.8.3 Pharmaceutical form of the placebo: ','')
+                        temp= temp.replace('D.8.4 Route of administration of the placebo: ','(')
+                        temp= temp+str(')')
+                        temp= temp.replace('\n','')
+                        placebo_info= placebo_info+temp+str(', ')
+                placebo_info = placebo_info.rstrip(' ')
+                placebo_info = placebo_info.rstrip(',')
+
+                text1234= Comp_text + str(" & ") + placebo_info
+                text1234= text1234.rstrip(" & ")
+                text1234= text1234.rstrip(" ")
+                text1234= text1234.rstrip("&")
+                text1234= text1234.lstrip(" & ")
+                text1234= text1234.lstrip(" ")
+                text1234= text1234.lstrip("&")
+                dict1['Comparator Drug']= text1234
+                dict1['Intervention']= intervention_text
+
+                if 'E.1.1 Medical condition(s) being investigated:' in sub_text:
+                    start2 = sub_text.find('E.1.1 Medical condition(s) being investigated:') + len ('E.1.1 Medical condition(s) being investigated:')+1
+                    temp= sub_text[start2:]
+                    end2 = temp.find('\n')
+                    temp= temp[:end2]
+                    temp = temp.rstrip("\n")
+                    dict1['Indication'] = temp
+
+                if 'E.1.1.2 Therapeutic area:' in sub_text:
+                    start2 = sub_text.find('E.1.1.2 Therapeutic area:') + len ('E.1.1.2 Therapeutic area:')+1
+                    temp= sub_text[start2:]
+                    end2 = temp.find('\n')
+                    temp= temp[:end2]
+                    temp = temp.rstrip("\n")
+                    dict1['Therapy area'] = temp
+
+                trial_detail_text = ""
+                if 'E.7.1 Human pharmacology (Phase I): Yes' in sub_text:
+                    trial_detail_text= trial_detail_text + 'Phase I Trial' + str(', ') 
+                if 'E.7.1.3 Other: Yes' in sub_text:
+                    trial_detail_text= trial_detail_text + 'Other Trials' + str(', ')
+                if 'E.7.2 Therapeutic exploratory (Phase II): Yes' in sub_text:
+                    trial_detail_text= trial_detail_text + 'Phase II Trial' + str(', ')
+                if 'E.7.3 Therapeutic confirmatory (Phase III): Yes' in sub_text:
+                    trial_detail_text= trial_detail_text + 'Phase III Trial' + str(', ')
+                if 'E.7.4 Therapeutic use (Phase IV): Yes' in sub_text:
+                    trial_detail_text= trial_detail_text + 'Phase IV Trial' + str(', ')
+                trial_detail_text= trial_detail_text.rstrip(' ')
+                trial_detail_text= trial_detail_text.rstrip(',')
+                dict1['Phase'] = trial_detail_text 
+
+                if 'E.7.1.3.1 Other trial type description:' in sub_text:
+                    start2 = sub_text.find('E.7.1.3.1 Other trial type description:') + len ('E.7.1.3.1 Other trial type description:')+1
+                    if 'E.7.1.3.1 Other trial type description (' in sub_text:
+                        end2= sub_text.find('''E.7.1.3.1 Other trial type description (''')-1
+                    elif 'E.7.2 T' in sub_text:
+                        end2= sub_text.find('E.7.2 T')-1
+                    temp = temp.rstrip("\n")
+                    temp= sub_text[start2:end2]
+                    dict1['Other trial type description'] = temp 
+
+                if 'E.8.6.3 If E.8.6.1 or E.8.6.2 are Yes, specify the regions in which trial sites are planned:' in sub_text:
+                    start2 = sub_text.find('E.8.6.3 If E.8.6.1 or E.8.6.2 are Yes, specify the regions in which trial sites are planned:') + len ('E.8.6.3 If E.8.6.1 or E.8.6.2 are Yes, specify the regions in which trial sites are planned:')+1
+                    end2= sub_text.find ('''E.8.7 ''')-1
+                    temp= sub_text[start2:end2]
+                    temp = temp.rstrip("\n")
+                    temp= temp.replace('\n',', ')
+                    dict1['Site'] = temp 
+
+                if 'F.1.1 Number of subjects for this age range:' in sub_text and 'F.1.1 Number of subjects for this age range:\n' not in sub_text:
+                    start2 = sub_text.find('F.1.1 Number of subjects for this age range:') + len ('F.1.1 Number of subjects for this age range:')+1
+                    temp= sub_text[start2:]
+                    end3= temp.find ('\n')
+                    temp= temp[:end3]
+                    temp = temp.rstrip("\n")
+                    temp = temp.rstrip(" ")
+                    if 'No' in temp or 'no' in temp:
+                        dict1['Number of subjects under 18'] = '0'
+                    else:
+                        dict1['Number of subjects under 18'] = temp
+                else:
+                    dict1['Number of subjects under 18'] = '0'   
+
+                if 'F.1.1.1.1 Number of subjects for this age range:' in sub_text and 'F.1.1.1.1 Number of subjects for this age range:\n' not in sub_text:
+                    start2 = sub_text.find('F.1.1.1.1 Number of subjects for this age range:') + len ('F.1.1.1.1 Number of subjects for this age range:')+1
+                    temp= sub_text[start2:]
+                    end3= temp.find ('\n')
+                    temp= temp[:end3]
+                    temp = temp.rstrip("\n")
+                    temp = temp.rstrip(" ")
+                    if 'No' in temp or 'no' in temp:
+                        dict1['In Utero'] = '0'
+                    else:
+                        dict1['In Utero'] = temp
+                else:
+                    dict1['In Utero'] = '0'
+
+                if 'F.1.1.2.1 Number of subjects for this age range:' in sub_text and 'F.1.1.2.1 Number of subjects for this age range:\n' not in sub_text:
+                    start2 = sub_text.find('F.1.1.2.1 Number of subjects for this age range:') + len ('F.1.1.2.1 Number of subjects for this age range:')+1
+                    temp= sub_text[start2:]
+                    end3= temp.find ('\n')
+                    temp= temp[:end3]
+                    temp = temp.rstrip("\n")
+                    temp = temp.rstrip(" ")
+                    if 'No' in temp or 'no' in temp:
+                        dict1['No of Preterm newborn infants (up to gestational age < 37 weeks)'] = '0'
+                    else:
+                        dict1['No of Preterm newborn infants (up to gestational age < 37 weeks)'] = temp
+                else:
+                    dict1['No of Preterm newborn infants (up to gestational age < 37 weeks)'] = '0'
+
+                if 'F.1.1.3.1 Number of subjects for this age range:' in sub_text and 'F.1.1.3.1 Number of subjects for this age range:\n' not in sub_text:
+                    start2 = sub_text.find('F.1.1.3.1 Number of subjects for this age range:') + len ('F.1.1.3.1 Number of subjects for this age range:')+1
+                    temp= sub_text[start2:]
+                    end3= temp.find ('\n')
+                    temp= temp[:end3]
+                    temp = temp.rstrip("\n")
+                    temp = temp.rstrip(" ")
+                    if 'No' in temp or 'no' in temp:
+                        dict1['No of Newborns (0-27 days)'] = '0'
+                    else:
+                        dict1['No of Newborns (0-27 days)'] = temp
+                else:
+                    dict1['No of Newborns (0-27 days)'] = '0'
+
+                if 'F.1.1.4.1 Number of subjects for this age range:' in sub_text and 'F.1.1.4.1 Number of subjects for this age range:\n' not in sub_text:
+                    start2 = sub_text.find('F.1.1.4.1 Number of subjects for this age range:') + len ('F.1.1.4.1 Number of subjects for this age range:')+1
+                    temp= sub_text[start2:]
+                    end3= temp.find ('\n')
+                    temp= temp[:end3]
+                    temp = temp.rstrip("\n")
+                    temp = temp.rstrip(" ")
+                    if 'No' in temp or 'no' in temp:
+                        dict1['No of Infants and toddlers (28 days-23 months)'] = '0'
+                    else:
+                        dict1['No of Infants and toddlers (28 days-23 months)'] = temp
+                else:
+                    dict1['No of Infants and toddlers (28 days-23 months)'] = '0'
+
+                if 'F.1.1.5.1 Number of subjects for this age range:' in sub_text and 'F.1.1.5.1 Number of subjects for this age range:\n' not in sub_text:
+                    start2 = sub_text.find('F.1.1.5.1 Number of subjects for this age range:') + len ('F.1.1.5.1 Number of subjects for this age range:')+1
+                    temp= sub_text[start2:]
+                    end3= temp.find ('\n')
+                    temp= temp[:end3]
+                    temp = temp.rstrip("\n")
+                    temp = temp.rstrip(" ")
+                    if 'No' in temp or 'no' in temp:
+                        dict1['No of Children (2-11years)'] = '0'
+                    else:
+                        dict1['No of Children (2-11years)'] = temp
+                else:
+                    dict1['No of Children (2-11years)'] = '0'
+
+                if 'F.1.1.6.1 Number of subjects for this age range:' in sub_text and 'F.1.1.6.1 Number of subjects for this age range:\n' not in sub_text:
+                    start2 = sub_text.find('F.1.1.6.1 Number of subjects for this age range:') + len ('F.1.1.6.1 Number of subjects for this age range:')+1
+                    temp= sub_text[start2:]
+                    end3= temp.find ('\n')
+                    temp= temp[:end3]
+                    temp = temp.rstrip("\n")
+                    temp = temp.rstrip(" ")
+                    if 'No' in temp or 'no' in temp:
+                        dict1['No of Adolescents (12-17 years)'] = '0'
+                    else:
+                        dict1['No of Adolescents (12-17 years)'] = temp
+                else:
+                    dict1['No of Adolescents (12-17 years)'] = '0'
+
+                if 'F.1.2.1 Number of subjects for this age range:' in sub_text and 'F.1.2.1 Number of subjects for this age range:\n' not in sub_text:
+                    start2 = sub_text.find('F.1.2.1 Number of subjects for this age range:') + len ('F.1.2.1 Number of subjects for this age range:')+1
+                    temp= sub_text[start2:]
+                    end3= temp.find ('\n')
+                    temp= temp[:end3]
+                    temp = temp.rstrip("\n")
+                    temp = temp.rstrip(" ")
+                    if 'No' in temp or 'no' in temp:
+                        dict1['No of Adults (18-64 years)'] = '0'
+                    else:
+                        dict1['No of Adults (18-64 years)'] = temp
+                else:
+                    dict1['No of Adults (18-64 years)'] = '0'
+
+                if 'F.1.3.1 Number of subjects for this age range:' in sub_text and 'F.1.3.1 Number of subjects for this age range:\n' not in sub_text:
+                    start2 = sub_text.find('F.1.3.1 Number of subjects for this age range:') + len ('F.1.3.1 Number of subjects for this age range:')+1
+                    temp= sub_text[start2:]
+                    end3= temp.find ('\n')
+                    temp= temp[:end3]
+                    temp = temp.rstrip("\n")
+                    temp = temp.rstrip(" ")
+                    if 'No' in temp or 'no' in temp:
+                        dict1['No of Elderly (>=65 years)'] = '0'
+                    else:
+                        dict1['No of Elderly (>=65 years)'] = temp
+                else:
+                    dict1['No of Elderly (>=65 years)'] = '0'
+
+                if 'F.4.2.2 In the whole clinical trial:' in sub_text and 'F.4.2.2 In the whole clinical trial:\n' not in sub_text:
+                    start2 = sub_text.find('F.4.2.2 In the whole clinical trial:') + len ('F.4.2.2 In the whole clinical trial:')+1
+                    temp= sub_text[start2:]
+                    end3= temp.find ('\n')
+                    temp= temp[:end3]
+                    temp = temp.rstrip("\n")
+                    temp = temp.rstrip(" ")
+                    if 'No' in temp or 'no' in temp:
+                        dict1['# Patient enrolled'] = '0'
+                    else:
+                        dict1['# Patient enrolled'] = temp
+                else:
+                    dict1['# Patient enrolled'] = '0'
+
+                if dict1['# Patient enrolled'] =='0':
+                    sum1= int(dict1['Number of subjects under 18']) + int(dict1['In Utero']) + int(dict1['No of Preterm newborn infants (up to gestational age < 37 weeks)']) + int(dict1['No of Newborns (0-27 days)']) + int(dict1['No of Infants and toddlers (28 days-23 months)']) +int(dict1['No of Children (2-11years)']) + int(dict1['No of Adolescents (12-17 years)']) + int(dict1['No of Adults (18-64 years)']) + int(dict1['No of Elderly (>=65 years)'])
+                    dict1['# Patient enrolled'] = str(sum1) 
+
+                if 'P. End of Trial Status: Completed' in sub_text:
+                    dict1['Trial Status'] = 'Completed'
+                elif 'P. End of Trial Status: Not Authorised' in sub_text:
+                    dict1['Trial Status'] = 'Not Authorised'
+                elif 'P. End of Trial Status: Ongoing' in sub_text:
+                    dict1['Trial Status'] = 'Ongoing'
+                elif 'P. End of Trial Status: Prematurely Ended' in sub_text:
+                    dict1['Trial Status'] = 'Prematurely Ended'
+                elif 'P. End of Trial Status: Prohibited by CA' in sub_text:
+                    dict1['Trial Status'] = 'Prohibited by CA'
+                elif 'P. End of Trial Status: Restarted' in sub_text:
+                    dict1['Trial Status'] = 'Restarted'
+                elif 'P. End of Trial Status: Suspended by CA' in sub_text:
+                    dict1['Trial Status'] = 'Suspended by CA'
+                elif 'P. End of Trial Status: Temporarily Halted' in sub_text:
+                    dict1['Trial Status'] = 'Temporarily Halted'
+                elif 'P. End of Trial Status: Trial Now Transitioned' in sub_text:
+                    dict1['Trial Status'] = 'Trial Now Transitioned'
+                elif 'P. End of Trial Status: GB - no longer in EU/EEA' in sub_text:
+                    dict1['Trial Status'] = 'GB - no longer in EU/EEA'             
+                else:
+                    dict1['Trial Status'] = 'Not Available'  
+
+                if ("P. End of Trial Status: Completed" in sub_text) and ("P. Date of the global end of the trial: " in sub_text):
+                    start2 = sub_text.find('Date of the global end of the trial:') + len ('Date of the global end of the trial:')+1
+                    end2= sub_text.find ('''Summary''')-1
+                    temp= sub_text[start2:end2]
+                    temp = temp.rstrip("\n")
+                    dict1['Trial Completion Date'] = temp
+
+                elif("P. End of Trial Status: Completed" in sub_text) and ("P. Date of the global end of the trial: " not in sub_text):
+                    dict1['Trial Completion Date'] = "Completed, Date not available"
+
+                elif("P. End of Trial Status: Completed" not in sub_text) and ("P. Date of the global end of the trial: " in sub_text):
+                    start2 = sub_text.find('Date of the global end of the trial:') + len ('Date of the global end of the trial:')+1
+                    end2= sub_text.find ('''Summary''')-2
+                    temp= sub_text[start2:end2]
+                    temp = temp.rstrip("\n")
+                    dict1['Trial Completion Date'] = temp
+                else:
+                    dict1['Trial Completion Date'] = "Ongoing / Date not available" 
+
+                if 'Link:' in sub_text:
+                    start2 = sub_text.find('Link:') + len ('Link:')+1
+                    end2= sub_text.find ('''A. Protocol Information''')-1
+                    temp= sub_text[start2:end2]
+                    temp = temp.rstrip("\n")
+                    dict1['ref website'] = temp 
+
+                #Updating the dictionary values
+                temp_dict.update(dict1)
+    #             print(temp_dict)
+                print("Completed reading the entry")
+
+
+                #creaating a dataframe from dictionary
+                df1=pd.DataFrame()
+                df1=pd.DataFrame(temp_dict,index=[i])
+
+                #Appending the newly created entry to the final_dataframe 
+                final_df=pd.concat([final_df, df1], axis=0)
+                print("-"*30)    #creating a seperator for each entry 
+            else:
+                print("The CRO: "+str(var1)+" is not present in Sponsor or Support or Organization information")
+                print("-"*30)
+
+            #since we do not want already read the entry, we can start the next iteration with end index of the last iteration
+            full_text = full_text[end1+15:]    #hence the first part of the text is removed here
+
+    else:
+        print("ERROR!! in Finding the file for: "+str(var1))
+        print("The file musrt have not downloaded properly")
+
+  
+       
+
+
+#step-5: This is the final Dataframe created (but might contain duplicates and index value is 1 for all)
+final_df.to_excel(r"C:\Users\Sanjaya.Hegde\Downloads\EUReg_raw.xlsx")
+print("Number of rows with duplicates: "+str(len(final_df)))
+final_df
+
+
+
+#step-6: Dropping the duplicate values and resetting the index 
+
+# final_df['Pharma Company Name- Sponsor'] = final_df['Pharma Company Name- Sponsor'].str.upper()
+final_df2= final_df.drop_duplicates()
+# final_df2=final_df2.columns.difference(['CRO Name'])
+final_df2= final_df2.drop_duplicates(subset=final_df2.columns.difference(['CRO Name']))
+final_df2.reset_index(inplace=True,drop=True)
+print("Number of rows without duplicates: "+str(len(final_df2)))
+final_df2
+
+import numpy as np
+final_df2.index = np.arange(1, len(final_df2) + 1)
+
+
+
+#step-7: cleaning and formating
+
+final_df2['In Utero'] = final_df2['In Utero'].fillna('0')
+final_df2['In Utero'] = final_df2['In Utero'].astype(int)
+final_df2['Number of subjects under 18'] = final_df2['Number of subjects under 18'].astype(int)
+final_df2['No of Preterm newborn infants (up to gestational age < 37 weeks)'] = final_df2['No of Preterm newborn infants (up to gestational age < 37 weeks)'].astype(int)
+final_df2['No of Newborns (0-27 days)'] = final_df2['No of Newborns (0-27 days)'].astype(int)
+final_df2['No of Infants and toddlers (28 days-23 months)'] = final_df2['No of Infants and toddlers (28 days-23 months)'].astype(int)
+final_df2['No of Children (2-11years)'] = final_df2['No of Children (2-11years)'].astype(int)
+final_df2['No of Adolescents (12-17 years)'] = final_df2['No of Adolescents (12-17 years)'].astype(int)
+final_df2['No of Adults (18-64 years)'] = final_df2['No of Adults (18-64 years)'].astype(int)
+final_df2['No of Elderly (>=65 years)'] = final_df2['No of Elderly (>=65 years)'].astype(int)
+final_df2['# Patient enrolled'] = final_df2['# Patient enrolled'].astype(int)
+
+#converting datatypes to the datetime format
+#column2 has date as well as some texts in between, we wanted to keep the text cells as it is, but to change the other as datetime formats
+convert_date = lambda x: pd.to_datetime(x, errors='ignore', format='%Y-%m-%d') if '-' in str(x) else x        #first format to convert is: 2022-12-31
+final_df2['Trial Completion Date'] = final_df2['Trial Completion Date'].astype(str)
+final_df2['Trial Completion Date'] = final_df2['Trial Completion Date'].apply(convert_date)
+
+
+
+
+print(len(final_df2))
+final_df2
+
+
+
+
+
+#step-8: Exporting the dataframe to Excel
+
+final_df2.to_excel(r'C:\Users\Sanjaya.Hegde\Downloads\EU Registry_Seperate1.xlsx')
+end_time = str(datetime.datetime.now())
+
+
+
+print(start_time)
+print(end_time)
+
+
+
+len(final_df2)
+pd.set_option ('display.max_columns', 2000) 
+pd.set_option ('display.max_rows', 2000) 
+
+
+
+#For updating few columns from the old Manually entered data
+EUreg_final = pd.DataFrame()
+
+# final_df2=pd.read_excel(r'C:\Users\Sanjaya.Hegde\Downloads\Client_specific_CRO_List_22Jan24.xlsx',sheet_name='EURegistry')
+df_error_edited=pd.read_excel(r'C:\Users\Sanjaya.Hegde\Downloads\Client_specific_CRO_List_22Jan24.xlsx',sheet_name='CRO_Clinical_Trials')
+
+df_error_edited.drop_duplicates()
+df_error_edited.columns
+df_error_edited2= df_error_edited[df_error_edited['Extracted From']=='EUReg']
+df_error_edited2= df_error_edited.loc[:,['NCTId/EudraCT Number','Intervention Name','Comparator','Member State Concerned (EUReg)']]
+
+merged_df=pd.merge(final_df2,df_error_edited2,left_on=['EudraCT Number','Member State Concerned'],right_on=['NCTId/EudraCT Number','Member State Concerned (EUReg)'],how='left')
+
+merged_df.drop('Intervention',axis=1,inplace=True)
+merged_df.drop('Comparator Drug',axis=1,inplace=True)
+merged_df.drop('Member State Concerned (EUReg)',axis=1,inplace=True)
+
+end_time = str(datetime.datetime.now())
+
+if 'NCTId/EudraCT Number' in str(merged_df.columns):
+    merged_df.drop('NCTId/EudraCT Number',inplace=True,axis=1)
+EUreg_final = merged_df
+EUreg_final.to_excel(r'C:\Users\Sanjaya.Hegde\Downloads\EU Registry_Seperate2.xlsx')
+
+
+
+#While doing QC, if we see any disturbancies, We change it manually
+print(len(EUreg_final))
+EUreg_final = merged_df
+EUreg_final
+
+
+
+
+
+
+
+
+# # CTGov Data Extraction
+# This Section contains the CTGov data Extraction code
+
+CTGov_final = pd.DataFrame()
+In_list=['Axis Clinicals Ltd.',
+'Accutest Research Laboratories',
+'ACM Global Laboratories',
+'Advanced Clinical research',
+'Axis Clinicals Limited',
+'Cliantha Research Ltd.',
+'CliniRx',
+'JSS Medical Research',
+'Micro Therapeutic Research Labs Pvt. Ltd.',
+'Mylan Laboratories Limited clinical research center',
+'PPD',
+'ProPharma',
+'PSI',
+'QPS',
+'Raptim Research Pvt. Ltd',
+'Siro Clinpharm Pvt Ltd',
+'Sristek Clinical Research Solutions Limited']
+
+EU_list=['A+ Science AB',
+'AB Science',
+'ACM Global Laboratories',
+'Acromion GmbH',
+'ADKNOMA HEALTH RESEARCH',
+'AIO-Studien-gGmbH',
+'AIX Scientifics',
+'Aixial',
+'Alira Health',
+'Amsterdam UMC, location VUmc',
+'Antaros Medical',
+'APICES SOLUCIONES S.L',
+'Appletree',
+'Austrian Breast & Colorectal Cancer Study Group (ABCSG)',
+'AXONAL-BIOSTATEM',
+'Biofortis',
+'Cellectis',
+'Clinica Group',
+'CLINICAL RESEARCH TECHNOLOGY',
+'Clinigen Clinical Supplies Management',
+'CLININFO',
+'Clinipace',
+'CONSORZIO PER VALUTAZIONI BIOLOGICHE E FARMACOLOGICHE',
+'EastHORN Clinical Services in CEE s.r.o.',
+'Ecsor',
+'EMN Research Italy',
+'EORTC (European Organisation for Research and Treatment of Cancer)',
+'EUROFINS OPTIMED',
+'EVIDILYA',
+'Excelya Germany GmbH',
+'FGK Clinical Research GmbH',
+'Fortrea',
+'FULLCRO S.R.L.',
+'GERS DATA',
+'GWT-TUD GmbH',
+'Harmony Clinical Research',
+'ICON Biosciences',
+'Idorsia Pharmaceuticals Ltd',
+'IHF GmbH',
+'INSERM (Institut National de la Santé et de la Recherche Médicale)',
+'KKS Netzwerk',
+'LATIS S.R.L.',
+'Linical Europe GmbH',
+'LINICAL SPAIN, S.L.U',
+'LINK Medical Research',
+'MEDSHARING',
+'Metronomia Clinical Research GmbH',
+'Nordic Society of Gynaecological Oncology - Clinical Trials Unit',
+'OCT Clinical',
+'Oncopeptides AB',
+'Parexel',
+'PDC*line Pharma SAS',
+'Pharm-Olam International',
+'Pharmtrace klinische Entwicklung GmbH',
+'PPD by Thermo Fisher Scientific',
+'Precision for Medicine (IT) S.r.l.',
+'Premier Research s.r.o.',
+'ProPharma Group Sweden AB',
+'SCOPE INTERNATIONAL FRANCE',
+'SLB PHARMA',
+'SOLADIS',
+'Spanish Breast Cancer Research Group',
+'STM PHARMA PRO S.R.L.',
+'Studies&Me',
+'Syneos Health',
+'Syntax for Science',
+'TFS HealthScience',
+'Viedoc Technologies',
+'Worldwide Clinical Trials',
+'Q2 Solutions',
+'Adelphi Targis','Advanced Clinical','AKRN scientific Consulting','ARN Healthcare','Bioclever CRO','Cabyc','Charles River Laboratories','Clintec','CTI Clinical Trial and Consulting Services','Distefar','Dynamic Solutions','East Horn Clinical Services','Effice Research','Ergomed','Evidence Clinical Research','EXPERIOR','GCPs','Geistek pharma','Icon plc','INC/Syneos Health','Kymos','Labcorp Drug Development (Before Covance)','Leon Research','Linical Co.','Meditrial','OPIS s.r.l.','Optimapharm','Oxon Epidemiology','Pivotal','PRA','PRA Health Sciences is now an ICON plc company','Psyncro','QualitecFarma','RegPharmaClin','RTI health Solutions','Sermes CRO','SFS CRO','Sofpromed','Synteract','TFS','Ypsilon CRO','Zurko Research',
+
+'Consorzio per Valutazioni Biologiche e Farmacologiche (CVBF)','Donawa Lifescience Consulting','GB Pharma','Hippocrates Research srl','Medi Service','Axonal-Biostatem','Caidya','Charles River Laboratories','Dokumeds','Simbec-Orion','Biomay','CW-Research & Management GmbH','E&E CRO Consulting','ZAK','Data Investigation Company Europe (DICE)','KasaConsult','Research Drive B.V.','HEMEX AG','Medidee','Bulgarian Association of Clinical Research (BACR)','Clinres Farmacija','EastHORN Clinical Services','Global Clinical Trials','Emmes','aCROnordic ApS','MAC Clinical Research®','Smerud Medical Research Group','Crown CRO','Clin4all','Eurofins Optimed','ExperTrials','International Clinical Trials Association (ICTA)','TRIO','AICROS','Biocard Research','Bioskin','CCDRD','Inamed','IST','P.R.I.S.M.A.','proDERM','Therapyte','FGK Clinical Research','Argint International Clinical Research and Development Services (Argint)','BiTrial Clinical Research','HungaroTrial','Szasz&Co. Bt','Cromos Pharma','Atlantia Clinical Trials','Medfiles','Comac Medical','Research Drive B.V.','MTZ Clinical Research','Blueclinical','VectorB2B','BiTrial Clinical Research','SMP','Clinres Farmacija','Cmed']
+b=list(map(lambda x: x.lower(), EU_list))
+a=set(b)
+EU_list=list(a)
+print(len(EU_list))
+EU_list
+
+
+
+import requests
+import pandas as pd
+import time
+
+IN_clinicaltrials = pd.DataFrame()
+for i in In_list:    
+    url = "https://clinicaltrials.gov/api/query/study_fields"
+    common_params = {
+        "expr": "",
+        "min_rnk": 1,
+        "max_rnk": 1000,
+        "fields": "NCTId,OrgClass,Condition,ResponsiblePartyType,ResponsiblePartyInvestigatorFullName,ResponsiblePartyInvestigatorTitle,SeeAlsoLinkURL,OrgFullName,ArmGroupType,OfficialTitle,CompletionDate,Phase,StudyType,CollaboratorName,InterventionType,EnrollmentCount,LocationCountry,InterventionName,BriefSummary",
+        "fmt": "json",
+        "rcv_s": "3",
+        "cntry": ""
+    }
+    
+    params = common_params.copy()
+    params["expr"] = i
+    
+    response = requests.get(url, params=params)
+    if response.status_code == 200:
+        data = response.json().get("StudyFieldsResponse", {}).get("StudyFields", [])
+        df_condition = pd.json_normalize(data)
+        IN_clinicaltrials = IN_clinicaltrials.append(df_condition)
+
+EU_clinicaltrials = pd.DataFrame()
+for i in EU_list:    
+    url = "https://clinicaltrials.gov/api/query/study_fields"
+    common_params = {
+        "expr": "",
+        "min_rnk": 1,
+        "max_rnk": 1000,
+        "fields": "NCTId,OrgClass,Condition,ResponsiblePartyType,ResponsiblePartyInvestigatorFullName,ResponsiblePartyInvestigatorTitle,SeeAlsoLinkURL,OrgFullName,ArmGroupType,OfficialTitle,CompletionDate,Phase,StudyType,CollaboratorName,InterventionType,EnrollmentCount,LocationCountry,InterventionName,BriefSummary",
+        "fmt": "json",
+        "rcv_s": "3",
+        "cntry": ""
+    }
+    
+    params = common_params.copy()
+    params["expr"] = i
+    
+    response = requests.get(url, params=params)
+    if response.status_code == 200:
+        data = response.json().get("StudyFieldsResponse", {}).get("StudyFields", [])
+        df_condition = pd.json_normalize(data)
+        EU_clinicaltrials = EU_clinicaltrials.append(df_condition)
+
+
+df_clinicaltrials=EU_clinicaltrials.append(IN_clinicaltrials)
+df_clinicaltrials.reset_index(drop=True)
+
+
+df=df_clinicaltrials[:]
+df
+df=df.drop(['Rank'],axis=1)
+df.describe()
+
+df['LocationCountry']=df['LocationCountry'].fillna('None')
+df
+
+s=[ "Austria",
+ "Belgium",
+ "Bulgaria",
+ "Croatia",
+ "Republic of cyprus",
+ "Czech Republic",
+ "Denmark",
+ "Estonia",
+ "Finland",
+ "France",
+ "Germany",
+ "Greece",
+ "Hungary",
+ "Ireland",
+ "Italy",
+ "Latvia",
+ "Lithuania",
+"Luxembourg",
+ "Malta",
+ "Netherlands",
+ "Poland ",
+ "Portugal",
+ "Romania",
+ "Slovakia",
+ "Slovenia",
+ "Spain",
+ "Sweden",]
+
+# df.drop_duplicates(inplace=True)
+df.reset_index(drop=True,inplace=True)
+
+
+df['UnLocation']= df['LocationCountry'].apply(lambda x: list(set(x)))
+
+# define the two lists
+list1 = s
+list2 = []
+
+# iterate over each row of the dataframe
+for index, row in df.iterrows():
+    # check if any value in the first list is present in the row's list
+    if any(item in row['UnLocation'] for item in list1):
+        # add the row to the second list
+        list2.append(row)
+
+# create a new dataframe from the second list
+df2 = pd.DataFrame(list2)
+
+# print the new dataframe
+df2
+
+
+
+df2.reset_index(drop=True,inplace=True)
+df2.to_csv('EU_IN.csv')
+df2
+
+
+pdf=pd.read_csv('EU_IN.csv')
+pdf.to_csv('checkpointflag.csv')
+df3=df2
+df3.reset_index(drop=True,inplace=True)
+df3['InterventionName']=df3['InterventionName'].apply(lambda x:  ", ".join(x) )
+df3
+
+
+if 'level_0' in df.columns:
+    df.drop('level_0',axis=1,inplace=True)
+df.reset_index(inplace=True)
+df2['UnLocation']=df2['UnLocation'].apply(lambda x: str(x))
+df3=df3[df3['InterventionType'].apply(lambda x : 'Drug' in x)]
+df3.to_csv(r'C:\Users\Sanjaya.Hegde\Downloads\CTGov_Seperate.csv')
+
+
+if 'level_0' in df3.columns:
+    df3.drop('level_0',axis=1,inplace=True)
+df3.reset_index(inplace=True)
+# df3.drop('index',axis=1,inplace=True)
+df3
+
+
+
+
+# # Merging EUReg and CTGov Extracted data
+# This Section contains the CTGov and EUReg extracted data combining for further Analysis
+
+#merging EUReg and CTGov
+import pandas as pd
+# CTGov_final= pd.read_csv(r'C:\Users\Sanjaya.Hegde\Downloads\CTGov_Seperate.csv')
+# EUreg_final= pd.read_excel(r'C:\Users\Sanjaya.Hegde\Downloads\EU Registry_Seperate2.xlsx')
+if 'NCTId/EudraCT Number' in str(EUreg_final.columns):
+    EUreg_final.drop('NCTId/EudraCT Number',inplace=True,axis=1)
+
+#Renaming the columns to make it uniform in both DFs
+EUreg_final.rename(columns= {'# Patient enrolled':'# of patients enrolled','EudraCT Number':'NCTId/EudraCT Number', 'Therapy area':'Therapy Area (EUReg)','Trial Status':'Trial State (EUReg)', 'Member State Concerned': 'Member State Concerned (EUReg)', 'IMP Role':'Arm Group Type/ IMP Role','Intervention':'Intervention Name','Comparator Drug':'Comparator','Pharma Company Name- Sponsor':'Sponsor', 'Therapy Area':'Therapy Area (EUReg)', 'Trial State':'Trial State (EUReg)','ref website':'Reference website'},inplace=True)
+CTGov_final.rename(columns={'NCTId':'NCTId/EudraCT Number','InterventionName':'Intervention Name', 'ArmGroupType': 'Arm Group Type/ IMP Role', 'Condition':'Indication', 'SeeAlsoLinkURL': 'Reference website', 'EnrollmentCount': '# of patients enrolled','UnLocation':'Site', 'CompletionDate':'Trial Completion Date','InterventionType': 'Intervention Type (CTGOV)','OrgFullName':'Sponsor','CollaboratorName':'CRO Name'},inplace=True)
+
+
+#Creating a new column "Extracted From"
+EUreg_final['Extracted From'] = 'EUReg'
+CTGov_final['Extracted From'] = 'CTGov'
+
+if 'index' in str(CTGov_final.columns):
+    CTGov_final.drop('index',axis=1,inplace=True)
+    
+# CTGov_final.reset_index(drop=True,inplace=True)
+# EUreg_final.reset_index(drop=True,inplace=True)
+Final_df=pd.DataFrame()
+
+#Mergin the dataframes
+Final_df=pd.concat([CTGov_final, EUreg_final], axis=0,ignore_index=False)
+Final_df.reset_index(inplace=True,drop=True)
+if 'Unnamed: 0' in str(Final_df.columns):
+    Final_df.drop('Unnamed: 0',inplace=True,axis=1)
+
+
+
+print(CTGov_final.columns)
+print(EUreg_final.columns)
+
+
+# # Creating New column Region
+# This Section contains the code for Creating a new column "Region" based on "Site"
+# Creating lists of EU and India region
+s=["Austria",
+ "Belgium",
+ "Bulgaria",
+ "Croatia",
+ "Republic of cyprus",
+ "Czech Republic",
+ "Denmark",
+ "Estonia",
+ "Finland",
+ "France",
+ "Germany",
+ "Greece",
+ "Hungary",
+ "Ireland",
+ "Italy",
+ "Latvia",
+ "Lithuania",
+"Luxembourg",
+ "Malta",
+ "Netherlands",
+ "Poland ",
+ "Portugal",
+ "Romania",
+ "Slovakia",
+ "Slovenia",
+ "Spain",
+ "Sweden"]
+
+ind=['India']
+uk= ['United Kingdom']
+
+l=[]
+Final_df['Site']= Final_df['Site'].fillna('')
+Final_df['Site']= Final_df['Site'].str.replace(' ','')
+import ast
+for i in range(len(Final_df)):
+    list2 = list((Final_df['Site'][i]).split(","))
+    eu_present = any(element in s for element in list2)
+    ind_present= any(element in ind for element in list2)
+    uk_present = any(element in uk for element in list2)
+    if eu_present and ind_present and uk_present:
+        l.append('Europe, United Kingdom and India')
+    elif eu_present and ind_present:
+        l.append('Europe and India')
+    elif eu_present and uk_present:
+        l.append('Europe and United Kingdom')
+    elif uk_present:
+        l.append('United Kingdom')
+    elif eu_present:
+        l.append('Europe')
+    elif ind_present:
+        l.append('India')
+    else:
+        l.append('Other Region/Site details not available')
+#     print(l)
+
+Final_df['Region']=l
+Final_df
+
+
+#Cleaning the dataframe 
+
+Final_df['NCTId/EudraCT Number']=Final_df['NCTId/EudraCT Number'].astype(str)
+Final_df['NCTId/EudraCT Number']= Final_df['NCTId/EudraCT Number'].fillna('')
+Final_df['NCTId/EudraCT Number']= Final_df['NCTId/EudraCT Number'].str.replace('[','')
+Final_df['NCTId/EudraCT Number']= Final_df['NCTId/EudraCT Number'].str.replace(']','')
+Final_df['NCTId/EudraCT Number']= Final_df['NCTId/EudraCT Number'].str.replace("'","")
+
+Final_df['CRO Name']= Final_df['CRO Name'].fillna('')
+Final_df['CRO Name']=Final_df['CRO Name'].astype(str)
+Final_df['CRO Name']= Final_df['CRO Name'].str.replace('[','')
+Final_df['CRO Name']= Final_df['CRO Name'].str.replace(']','')
+Final_df['CRO Name']= Final_df['CRO Name'].str.replace("'","")
+Final_df['CRO Name']= Final_df['CRO Name'].str.replace('"',"")
+
+Final_df['Indication']= Final_df['Indication'].fillna('')
+Final_df['Indication']=Final_df['Indication'].astype(str)
+Final_df['Indication']= Final_df['Indication'].str.replace('[','')
+Final_df['Indication']= Final_df['Indication'].str.replace(']','')
+Final_df['Indication']= Final_df['Indication'].str.replace("'","")
+
+Final_df['Sponsor']= Final_df['Sponsor'].fillna('')
+Final_df['Sponsor']= Final_df['Sponsor'].astype(str)
+Final_df['Sponsor']= Final_df['Sponsor'].str.replace('[','')
+Final_df['Sponsor']= Final_df['Sponsor'].str.replace('[','')
+Final_df['Sponsor']= Final_df['Sponsor'].str.replace(']','')
+Final_df['Sponsor']= Final_df['Sponsor'].str.replace("'","")
+
+Final_df['Intervention Name']= Final_df['Intervention Name'].fillna('')
+Final_df['Intervention Name']= Final_df['Intervention Name'].astype(str)
+Final_df['Intervention Name']= Final_df['Intervention Name'].str.replace('[','')
+Final_df['Intervention Name']= Final_df['Intervention Name'].str.replace('[','')
+Final_df['Intervention Name']= Final_df['Intervention Name'].str.replace(']','')
+Final_df['Intervention Name']= Final_df['Intervention Name'].str.replace("'","")
+
+Final_df['Intervention Type (CTGOV)']= Final_df['Intervention Type (CTGOV)'].fillna('')
+Final_df['Intervention Type (CTGOV)']= Final_df['Intervention Type (CTGOV)'].astype(str)
+Final_df['Intervention Type (CTGOV)']= Final_df['Intervention Type (CTGOV)'].str.replace('[','')
+Final_df['Intervention Type (CTGOV)']= Final_df['Intervention Type (CTGOV)'].str.replace('[','')
+Final_df['Intervention Type (CTGOV)']= Final_df['Intervention Type (CTGOV)'].str.replace(']','')
+Final_df['Intervention Type (CTGOV)']= Final_df['Intervention Type (CTGOV)'].str.replace("'","")
+
+Final_df['Reference website']= Final_df['Reference website'].fillna('')
+Final_df['Reference website']= Final_df['Reference website'].astype(str)
+Final_df['Reference website']= Final_df['Reference website'].str.replace('[','')
+Final_df['Reference website']= Final_df['Reference website'].str.replace('[','')
+Final_df['Reference website']= Final_df['Reference website'].str.replace(']','')
+Final_df['Reference website']= Final_df['Reference website'].str.replace("'","")
+
+Final_df['Arm Group Type/ IMP Role']= Final_df['Arm Group Type/ IMP Role'].fillna('')
+Final_df['Arm Group Type/ IMP Role']= Final_df['Arm Group Type/ IMP Role'].astype(str)
+Final_df['Arm Group Type/ IMP Role']= Final_df['Arm Group Type/ IMP Role'].str.replace('[','')
+Final_df['Arm Group Type/ IMP Role']= Final_df['Arm Group Type/ IMP Role'].str.replace('[','')
+Final_df['Arm Group Type/ IMP Role']= Final_df['Arm Group Type/ IMP Role'].str.replace(']','')
+Final_df['Arm Group Type/ IMP Role']= Final_df['Arm Group Type/ IMP Role'].str.replace("'","")
+
+Final_df['Phase']= Final_df['Phase'].fillna('')
+Final_df['Phase']= Final_df['Phase'].astype(str)
+Final_df['Phase']= Final_df['Phase'].str.replace('[','')
+Final_df['Phase']= Final_df['Phase'].str.replace('[','')
+Final_df['Phase']= Final_df['Phase'].str.replace(']','')
+Final_df['Phase']= Final_df['Phase'].str.replace("'","")
+Final_df['Phase']= Final_df['Phase'].str.replace("Phase II Trial","Phase 2")
+Final_df['Phase']= Final_df['Phase'].str.replace("Phase III Trial","Phase 3")
+Final_df['Phase']= Final_df['Phase'].str.replace("Phase I Trial","Phase 1")
+Final_df['Phase']= Final_df['Phase'].str.replace("Phase IV Trial","Phase 4")
+Final_df['Phase']= Final_df['Phase'].str.replace("Phase V Trial","Phase 5")
+
+Final_df['# of patients enrolled']= Final_df['# of patients enrolled'].fillna('0')
+Final_df['# of patients enrolled']= Final_df['# of patients enrolled'].astype(str)
+Final_df['# of patients enrolled']= Final_df['# of patients enrolled'].str.replace(r'\[\]','0')
+Final_df['# of patients enrolled']= Final_df['# of patients enrolled'].str.replace('[','')
+Final_df['# of patients enrolled']= Final_df['# of patients enrolled'].str.replace('[','')
+Final_df['# of patients enrolled']= Final_df['# of patients enrolled'].str.replace(']','')
+Final_df['# of patients enrolled']= Final_df['# of patients enrolled'].str.replace("'","")
+
+Final_df['Trial Completion Date']= Final_df['Trial Completion Date'].fillna('Ongoing / Date not available')
+Final_df['Trial Completion Date']= Final_df['Trial Completion Date'].astype(str)
+Final_df['Trial Completion Date']= Final_df['Trial Completion Date'].str.replace('[','')
+Final_df['Trial Completion Date']= Final_df['Trial Completion Date'].str.replace('[','')
+Final_df['Trial Completion Date']= Final_df['Trial Completion Date'].str.replace(']','')
+Final_df['Trial Completion Date']= Final_df['Trial Completion Date'].str.replace("'","")
+
+Final_df['Site']= Final_df['Site'].fillna('')
+Final_df['Site']= Final_df['Site'].astype(str)
+Final_df['Site']= Final_df['Site'].str.replace('[','')
+Final_df['Site']= Final_df['Site'].str.replace('[','')
+Final_df['Site']= Final_df['Site'].str.replace(']','')
+Final_df['Site']= Final_df['Site'].str.replace("'","")
+
+Final_df['# of patients enrolled'] = Final_df['# of patients enrolled'].fillna('0')
+Final_df['# of patients enrolled'] = Final_df['# of patients enrolled'].astype(int)
+Final_df['Comparator']= Final_df['Comparator'].fillna('')
+Final_df2=Final_df[:]
+Final_df2
+
+
+#Selecting only required columns with order
+Final_df3= Final_df2[['NCTId/EudraCT Number','CRO Name','Region','Sponsor','Intervention Name','Intervention Type (CTGOV)','Arm Group Type/ IMP Role','Comparator','Indication','Phase','# of patients enrolled','Trial Completion Date','Site','Reference website','Extracted From','Member State Concerned (EUReg)','Therapy Area (EUReg)','Trial State (EUReg)']]
+Final_df3
+
+#Converting dates columns
+convert_date1 = lambda x: pd.to_datetime(x, errors='ignore', format='%Y-%m-%d') if '-' in str(x) else x        #first format to convert is: 2022-12-31
+convert_date2 = lambda x: pd.to_datetime(x, errors='ignore', format='%B %d, %Y') if ',' in str(x) else x        #first format to convert is: 2022-12-31
+convert_date3 = lambda x: pd.to_datetime(x, errors='ignore', format='%B %Y')        #first format to convert is: 2022-12-31
+Final_df3['Trial Completion Date'] = Final_df3['Trial Completion Date'].astype(str)
+Final_df3['Trial Completion Date'] = Final_df3['Trial Completion Date'].apply(convert_date1)
+Final_df3['Trial Completion Date'] = Final_df3['Trial Completion Date'].apply(convert_date2)
+Final_df3['Trial Completion Date'] = Final_df3['Trial Completion Date'].apply(convert_date3)
+
+
+pd.set_option ('display.max_columns', 2000) 
+pd.set_option ('display.max_rows', 2000) 
+
+
+
+# Sorting the DataFrame by the length of the 'site' column in descending order
+Final_df3.sort_values(by='Site', key=lambda x: x.str.len(), ascending=False, inplace=True)
+Final_df3['CRO Name']=Final_df3['CRO Name'].str.upper()
+
+# Dropping duplicates based on specific columns, keeping the first occurrence (longest site)
+Final_df3.drop_duplicates(subset=['NCTId/EudraCT Number','Region','Sponsor','Intervention Name','Arm Group Type/ IMP Role','Comparator','Indication','Phase','# of patients enrolled','Trial Completion Date'], keep='first',inplace=True)
+
+# Resetting the index after dropping duplicates
+Final_df3.sort_values(['CRO Name', 'NCTId/EudraCT Number'], ascending=[True, True], inplace=True)
+Final_df3.reset_index(drop=True,inplace=True)
+Final_df3.to_excel(r'C:\Users\Sanjaya.Hegde\Downloads\Final check2.xlsx',index=False)
+Final_df3
+
+
+# # Reading Client_specific Portfolio of Drugs
+# This Section contains the code for Reading the Client_specific portfolio which is created using python
+Client _specific_portfolio_df=pd.DataFrame()
+Client _specific_portfolio_df= pd.read_excel(r'C:\Users\Sanjaya.Hegde\Downloads\Client_specific_Product_portfolio.xlsx')
+
+Client _specific_portfolio_df
+
+
+Final_df3.to_excel(r'C:\Users\Sanjaya.Hegde\Downloads\Final check4.xlsx',index=False)
+Final_df3
+
+
+
+
+
+# Seggregating Intervation and Comparators
+
+df2=Final_df3
+df3=df2[df2['Extracted From']=='CTGov']
+l=df3.index.to_list()
+for i in l:
+    kick=[]
+    if type(df2['Arm Group Type/ IMP Role'][i])!=float:
+        if len(df2['Intervention Name'][i].split(","))==len(df2['Arm Group Type/ IMP Role'][i].split(",")):
+            k=df2['Arm Group Type/ IMP Role'][i].split(",")
+            intlist=df2['Intervention Name'][i].split(",")
+            for j in range(len(k)):
+                if 'Comparator' in k[j]:
+                    kick.append(intlist[j])
+                    print(kick)
+            for p in intlist:
+                for v in kick:
+                    if v==p:
+                        intlist.remove(p)
+            if len(intlist)==0:
+                print('yes')
+            inl=''
+            ki=''
+            for u in intlist:
+                inl+=u+','
+            for x in kick:
+                ki+=x+','
+            df2['Intervention Name'][i]=inl[:-1]
+            df2['Comparator'][i]=ki[:-1]
+
+for i in l:
+    if len(df2['Intervention Name'][i].split(','))==1:
+        if (type(df2['Intervention Name'][i])!=float and type(df2['Comparator'][i])!=float):
+            if df2['Intervention Name'][i] in df2['Comparator'][i]:
+                df2['Intervention Name'][i]='NA'
+
+
+
+
+df2.to_excel(r'C:\Users\Sanjaya.Hegde\Downloads\Final_file_before_fuzzy.xlsx',index=False)
+
+
+
+
+# Reading and updating from the old excel which is updated mannually
+
+# final_df2=pd.read_excel(r'C:\Users\Sanjaya.Hegde\Downloads\Client_specific_CRO_List_22Jan24.xlsx',sheet_name='EURegistry')
+df_error_edited=pd.read_excel(r'C:\Users\Sanjaya.Hegde\Downloads\Client_specific_CRO_List_23Jan24_1.xlsx',sheet_name='CRO_Clinical_Trials')
+
+df_error_edited.drop_duplicates()
+df_error_edited.columns
+df_error_edited2= df_error_edited.loc[:,['NCTId/EudraCT Number','Intervention Name','Comparator','Member State Concerned (EUReg)','Indication','Therapy Area (EUReg)']]
+print(len(df_error_edited2))
+
+
+
+
+df2.columns
+
+
+
+
+df_error_edited2.columns
+
+
+
+
+# Merging the dataframe 
+merged_df=pd.merge(df2,df_error_edited2,left_on=['NCTId/EudraCT Number','Member State Concerned (EUReg)'],right_on=['NCTId/EudraCT Number','Member State Concerned (EUReg)'],how='left')
+merged_df
+
+
+
+# If the data is present already in Old excel, update that value else keep from the extracted data
+merged_df['Intervention Name'] = merged_df.apply(lambda x: x['Intervention Name_y'] if x['Intervention Name_y'] != None else x['Intervention Name_x'], axis=1)
+merged_df['Comparator'] = merged_df.apply(lambda x: x['Comparator_y'] if x['Comparator_y'] != None else x['Comparator_x'], axis=1)
+merged_df['Indication'] = merged_df.apply(lambda x: x['Indication_y'] if x['Indication_y'] != None else x['Indication_x'], axis=1)
+merged_df['Therapy Area (EUReg)'] = merged_df.apply(lambda x: x['Therapy Area (EUReg)_y'] if x['Therapy Area (EUReg)_y'] != None else x['Therapy Area (EUReg)_x'], axis=1)
+
+Final_df3= merged_df
+Final_df3.sort_values(['CRO Name', 'NCTId/EudraCT Number'], ascending=[True, True], inplace=True)
+Final_df3.reset_index(drop=True,inplace=True)
+Final_df3
+
+
+
+
+
+# # Saving the Final File
+# This Section contains the code for saving the Final file
+
+
+
+# Keeping only required columns and in order
+
+Final_df3= Final_df3[['NCTId/EudraCT Number','CRO Name','Region','Sponsor','Intervention Name','Intervention Type (CTGOV)','Arm Group Type/ IMP Role','Comparator','Indication','Phase','# of patients enrolled','Trial Completion Date','Site','Reference website','Extracted From','Member State Concerned (EUReg)','Therapy Area (EUReg)','Trial State (EUReg)']]
+
+
+
+fin = Final_df3
+import pandas as pd
+
+# Assuming you have DataFrames Final_df3 and Client _specific_portfolio_df
+
+# and columns 'Intervention Name' and 'GENERIC NAME' respectively
+ 
+# Create new columns with default values
+
+fin['Client_specific_Gen_Inv_Pres'] = 'N'
+
+fin['Client_specific_Gen_Inv_prod_Name'] = None
+ 
+fin['Client_specific_Trade_Inv_Pres'] = 'N'
+
+fin['Client_specific_Trade_Inv_prod_Name'] = None
+ 
+# Iterate through each row in Final_df3
+
+for index, row in fin.iterrows():
+
+    intervention_names = row['Intervention Name']
+
+    for generic_name in Client _specific_portfolio_df['GENERIC NAME']:
+
+        if generic_name.upper().replace(' ','') in intervention_names.upper().replace(' ',''):
+
+            fin.at[index, 'Client_specific_Gen_Inv_Pres'] = 'Y'
+
+            fin.at[index, 'Client_specific_Gen_Inv_prod_Name'] = generic_name
+
+            break  # Stop searching if a match is found
+
+# Iterate through each row in Final_df3
+
+for index, row in fin.iterrows():
+
+    intervention_names = row['Intervention Name']
+
+    for generic_name in Client _specific_portfolio_df['TRADE NAME']:
+
+        if generic_name.upper().replace(' ','') in intervention_names.upper().replace(' ',''):
+
+            fin.at[index, 'Client_specific_Trade_Inv_Pres'] = 'Y'
+
+            fin.at[index, 'Client_specific_Trade_Inv_prod_Name'] = generic_name
+
+            break  # Stop searching if a match is found
+
+
+# Assuming you have DataFrames Final_df3 and Client _specific_portfolio_df
+
+# and columns 'Intervention Name' and 'GENERIC NAME' respectively
+
+# Create new columns with default values
+
+fin['Client_specific_Gen_Comp_Pres'] = 'N'
+
+fin['Client_specific_Gen_Comp_prod_Name'] = None
+ 
+fin['Client_specific_Trade_Comp_Pres'] = 'N'
+
+fin['Client_specific_Trade_Comp_prod_Name'] = None
+
+# Iterate through each row in Final_df3
+
+for index, row in fin.iterrows():
+
+    intervention_names = row['Comparator']
+
+    for generic_name in Client _specific_portfolio_df['GENERIC NAME']:
+
+        if generic_name.upper().replace(' ','') in intervention_names.upper().replace(' ',''):
+
+            fin.at[index, 'Client_specific_Gen_Comp_Pres'] = 'Y'
+
+            fin.at[index, 'Client_specific_Gen_Comp_prod_Name'] = generic_name
+
+            break  # Stop searching if a match is found
+
+# Iterate through each row in Final_df3
+
+for index, row in fin.iterrows():
+
+    intervention_names = row['Comparator']
+
+    for generic_name in Client _specific_portfolio_df['TRADE NAME']:
+
+        if generic_name.upper().replace(' ','') in intervention_names.upper().replace(' ',''):
+
+            fin.at[index, 'Client_specific_Trade_Comp_Pres'] = 'Y'
+
+            fin.at[index, 'Client_specific_Trade_Comp_prod_Name'] = generic_name
+
+            break  # Stop searching if a match is found
+
+
+
+Final_Final=fin
+
+
+
+
+# Saving the Final data to the excel
+
+Final_Final.to_excel(r'C:\Users\Sanjaya.Hegde\Downloads\Final_Final3.xlsx',index=False)
