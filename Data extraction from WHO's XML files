@@ -1,0 +1,975 @@
+'''
+This code will be reading the XML file and creates a excel with required fields
+Downloded a sample xml file and kept in the same repository as 'Sample.xml' from WHO website (https://trialsearch.who.int/ListBy.aspx?TypeListing=2)
+'''
+
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[1]:
+#importing all the required packages and modules
+import time
+import glob
+import re
+import pandas as pd
+import win32com.client
+import warnings
+from tqdm import tqdm
+import time
+from fuzzywuzzy import fuzz
+from concurrent.futures import ThreadPoolExecutor
+from collections import Counter
+from drug_named_entity_recognition import find_drugs
+from nltk.tokenize import wordpunct_tokenize
+from collections import Counter
+
+warnings.filterwarnings("ignore")
+start_time_total= time.time()
+pd.set_option('Display.max_column',10000)
+pd.set_option('Display.max_row',10000)
+
+#select the path where all the XML files are present
+directory_path = r'C:\Users\Sanjaya.Hegde\Downloads\Data\Data'
+xml_files = glob.glob(directory_path + '/*.xml')
+
+
+# In[2]:
+#QC-1
+#the total countries are 17, india has 2 files so total 18 should be present
+
+print(len(xml_files))
+
+
+# In[3]:
+# creating a dataframe df1 with all the data of XML files in the path and saving in csv
+start_time = time.time()  
+
+df1 = pd.DataFrame()
+for xml_file in xml_files:
+    df = pd.read_xml(xml_file)
+    #creating a column country_name using the filename
+    df['Country_Name']=str(xml_file).replace(r'C:\Users\Sanjaya.Hegde\Downloads\Data\Data\WHO-','').replace('.xml','').replace('1','')
+    df1 = pd.concat([df1, df], axis=0, ignore_index=True)
+    print("There are " +str(len(df)) + " records for: " +str(xml_file).replace(r'C:\Users\Sanjaya.Hegde\Downloads\Data\Data\WHO-','').replace('.xml','') +"'s file")
+df1.to_csv('final_select.csv')
+         
+end_time = time.time()
+# Calculate and display the execution time
+print("Execution time:", end_time - start_time, "seconds")
+
+
+# In[4]:
+#QC-2
+#to check if all the columns are present
+df1.columns
+
+
+# In[5]:
+#QC-3
+#to check the top few rows if the data looks fine
+
+df1.head(10)
+
+
+# In[6]:
+#creating a backup if anything goes wrong in any place, no need of reading the files again, saves time
+df=df1.copy()
+df_backup= df.copy()
+total= len(df)
+print("Total Number of Trials: " +str(len(df)))
+
+
+# In[7]:
+#checking # of Observational study
+obs_studies = len(df[df['Study_type']=='Observational'])
+print("Total Number of Observational Study trials: " +str(obs_studies))
+
+
+# In[8]:
+#checking # of Interventional study
+df_new= df[df['Study_type']!='Observational']
+intr_studies = len(df[df['Study_type']!='Observational'])
+print("Total Number of Interventional Study trials: "+str(intr_studies))
+
+
+# In[9]:
+#QC-4
+#total= (intr_studies)+(obs_studies)
+
+total_valid = intr_studies+obs_studies
+if total_valid == total:
+    print("QC-4 is passed")
+else:
+    print("QC-4 is failed")
+
+
+# In[10]:
+print("Total there are " +str(len(df))+ " rows of data from WHO, but we are keeping only "+str(len(df_new))+" rows \nSince they are Interventional studies and we are removing observational studies")
+
+
+# In[11]:
+#QC-5
+#dropping dupicates if any
+#number of records must be lesser than or equal to intr_studies
+
+df_new.drop_duplicates(inplace=True)
+len(df_new)
+
+
+# In[12]:
+#QC-6
+#unique country names should be 17
+
+print(len(df['Country_Name'].unique()))
+df['Country_Name'].unique()
+
+
+# In[13]:
+# data cleaning for target size and phase
+start_time = time.time()
+
+# keeping only numbers from column target_size (somewhere we were having string data as well)
+df_new['Target_size']= df_new['Target_size'].fillna('0')
+df_new['Target_size']= df_new['Target_size'].astype(str)
+df_new['Target_size'] = df_new['Target_size'].str.extract(r'(\d+)').astype(float)
+
+# cleaning phase column (Phase column had many variation, uniforming it to some extent)
+def clean_phase(text):
+    text = text.replace('IV','4').replace('III','3').replace('II','2').replace('I','1')
+    text = text.replace('/1',', Phase 1').replace('/2',', Phase 2').replace('/3',', Phase 3').replace('/4',', Phase 4').replace('/',', ')
+    if re.search(r'[(]Phase\s*1[)]\s*:\s*yes', text):
+        return 'Phase 1'
+    elif re.search(r'[(]Phase\s*2[)]\s*:\s*yes', text):
+        return 'Phase 2'
+    elif re.search(r'[(]Phase\s*3[)]\s*:\s*yes', text):
+        return 'Phase 3'
+    elif re.search(r'[(]Phase\s*4[)]\s*:\s*yes', text):
+        return 'Phase 4'
+    elif text =='1':
+        return 'Phase 1'
+    elif text =='2':
+        return 'Phase 2'
+    elif text =='3':
+        return 'Phase 3'
+    elif text =='4':
+        return 'Phase 4' 
+    elif text == 'Phase 2-3':
+        return 'Phase 2, Phase 3'
+    elif text == '1 to 2':
+        return 'Phase 1, Phase 2'
+    elif text == '2 to 3':
+        return 'Phase 2, Phase 3'
+    elif text == '3 to 4':
+        return 'Phase 3, Phase 4'
+    elif text == '1 (Phase 1 study)':
+        return 'Phase 1'
+    elif text == '2 (Phase 2 study)':
+        return 'Phase 2'
+    elif text == '3 (Phase 3 study)':
+        return 'Phase 3'
+    elif text == '4 (Phase 4 study)':
+        return 'Phase 4'
+    elif text == '1 (Phase 1 study)':
+        return 'Phase 1'
+    elif text == 'Phase1':
+        return 'Phase 1'
+    elif text == 'Phase2':
+        return 'Phase 2'
+    elif text == 'Phase3':
+        return 'Phase 3'
+    elif text == 'Phase4':
+        return 'Phase 4'
+    elif text == 'Phase-1':
+        return 'Phase 1'
+    elif text == 'Phase-2':
+        return 'Phase 2'
+    elif text == 'Phase-3':
+        return 'Phase 3'
+    elif text == 'Phase-4':
+        return 'Phase 4'
+    elif text == 'Phase 1,2':
+        return 'Phase 1, Phase 2'
+    elif text == 'Phase 2,3':
+        return 'Phase 2, Phase 3'
+    elif text == 'Phase 3,4':
+        return 'Phase 3, Phase 4'
+    elif text == 'Phase-1':
+        return 'Phase 1'
+    elif text == 'Phase-2':
+        return 'Phase 2'
+    elif text == 'Phase-3':
+        return 'Phase 3'
+    elif text == 'Phase-4':
+        return 'Phase 4'
+    elif text== '1+2 (Phase 1+Phase 2)':
+        return 'Phase 1, Phase 2'
+    elif text== 'Early Phase 1':
+        return 'Phase 1'
+    elif text =='0 (exploratory trials)':
+        return 'Phase 0'
+    elif text =='Phase-0':
+        return 'Phase 0'
+    elif text =='Human pharmacology (Phase 1): no\n                Therapeutic exploratory (Phase 2): no\n                Therapeutic confirmatory - (Phase 3): no\n                Therapeutic use (Phase 4): no':
+        return 'Not Available'
+    elif text =='Human pharmacology (Phase 1): no\nTherapeutic exploratory (Phase 2): no\nTherapeutic confirmatory - (Phase 3): no\nTherapeutic use (Phase 4): no':
+        return 'Phase 0'
+    elif text =='1-2':
+        return 'Phase 1, Phase 2'
+    elif text =='2-3':
+        return 'Phase 2, Phase 3'
+    elif text =='3-4':
+        return 'Phase 3, Phase 4'
+    elif text =='0':
+        return 'Phase 0'
+    elif text=='nan':
+        return 'None'
+    elif text== 'Post Marketing Surveillance':
+        return 'Phase 4'
+    elif text== 'Post-market':
+        return 'Phase 4'
+    else:
+        return text
+df_new['Phase'] = df_new['Phase'].astype(str).apply(clean_phase)
+         
+end_time = time.time()
+# Calculate and display the execution time
+print("Execution time:", end_time - start_time, "seconds")
+
+
+# In[14]:
+#QC-7
+#to check if the phase column cleaning is working
+#the phase column should have less variations less than 30 (it should not contain: / Phase I II III IV etc)
+
+print(len(df_new['Phase'].unique()))
+df_new['Phase'].unique()
+
+
+# In[15]:
+# List of values to filter out
+phases_to_remove = ['Retrospective study','Diagnostic New Technique Clincal Study', 'Pilot study', 'New Treatment Measure Clinical Study', 'Pilot clinical trial']
+
+print(len(df_new))
+# Filter out rows with specified values in 'Phase' column
+df_new = df_new[~df_new['Phase'].isin(phases_to_remove)]
+print(len(df_new))
+
+
+# In[16]:
+#cleaning Condition column
+start_time = time.time() 
+
+global a
+a=0
+df_new['Condition']=df_new['Condition'].fillna(' ')
+df_new['Condition']=df_new['Condition'].astype(str)
+def process_condition_text(condition):
+    conditions_list = []
+    condition.replace(', unspecified',',').replace(';','').replace('unspecified',',').replace('Health Condition 2:',',Health Condition 2:').replace('Health Condition 3:',',Health Condition 3:').replace('Health Condition 4:',',Health Condition 4:').replace(',,',',').replace(', ,',',')    
+    #if health condition is present, extract the values next to health condition
+    if "Health Condition" in condition:
+        condition = condition.replace('\n',',')
+        condition_parts = condition.split(",")
+        try:
+            for part in condition_parts:
+                if "Health Condition" in part:
+                    condition_text = part.split(":")[1].strip()
+                    conditions_list.append(condition_text)
+            return ", ".join(conditions_list)
+        except Exception as e:
+            global a
+            a+=1
+            return "Health Condition is not found"
+
+    elif "<br>" not in condition and "Health Condition" not in condition and ";" not in condition:
+        return condition
+    
+    elif "<br>" in condition:
+        condition_parts = condition.split("<br>")
+        if len(condition_parts[0])>8 and len(condition_parts[0])<60:
+            return condition_parts[0].replace(';','').strip()
+        else:
+            return "Health Condition is not found"
+        
+    elif ";" in condition:
+        condition_parts = condition.split(";")
+        if len(condition_parts[0])>8 and len(condition_parts[0])<60:
+            return condition_parts[0].replace(';','').strip()
+        else:
+            return "Health Condition is not found"
+    else:
+        return "Health Condition is not found"
+
+df_new['Processed_Condition'] = df_new['Condition'].apply(process_condition_text)
+print("Health Condition is not found due to logical errors/complex patterns: " + str(a) + " out of " +str(len(df_new))+" records")
+         
+end_time = time.time()
+# Calculate and display the execution time
+print("Execution time:", end_time - start_time, "seconds")
+
+
+# In[17]:
+#to check for how many rows of data, the condition is available
+print(len(df_new[df_new['Processed_Condition']!='Health Condition is not found']))
+print(len(df_new[df_new['Processed_Condition']=='Health Condition is not found']))
+# df_new[df_new['Processed_Condition']!='Health Condition is not found']
+
+
+# In[18]:
+print("Number of different Conditions present in the data: " +str(len(df_new['Processed_Condition'].unique())))
+df_new['Processed_Condition'].unique()
+
+
+# In[19]:
+# checking the word counts for indication/condition for QCing
+
+def word_counts(column_data):
+    # Combine all strings in the column into a single string
+    all_text = ' '.join(column_data)
+    words = all_text.upper().split(', ')
+    word_count = Counter(words)
+    return word_count
+word_count_dict = word_counts(df_new['Processed_Condition'])
+word_count_df = pd.DataFrame(list(word_count_dict.items()), columns=['Word', 'Count'])
+
+#sorting the dataframe with highest number of word count
+print(len(word_count_df))
+word_count_df.sort_values(by=['Count'],ascending=False).head(10000)
+
+#QC-8
+#check the list with word counts and check if We need to clean up something or looks fine
+
+
+# In[20]:
+df_new.columns
+
+
+
+# In[21]:
+#do cleaning for "Processed_Condition" column here if needed
+
+
+# In[22]:
+# creating a column "Intervention_clean" with extracting molecular names from intervention column
+start_time = time.time() 
+
+df_new['Intervention']=df_new['Intervention'].fillna('')
+df_new['Intervention']= list(map(lambda x: x.replace('None','').replace('none','').replace('NONE',''),df_new['Intervention']))
+
+def drugs(x):
+    tokens = wordpunct_tokenize(x)
+    drug_names = set()
+    for result in find_drugs(tokens, is_ignore_case=True):
+        drug_names.add(result[0]['name'])
+    return drug_names
+df_new['Intervention_clean'] = df_new['Intervention'].apply(lambda x: drugs(x))
+         
+end_time = time.time()
+# Calculate and display the execution time
+print("Execution time:", end_time - start_time, "seconds")
+
+
+# In[23]:
+# cleaning the intervention column (it had {},Set(),'',Ciclosporin, Chloroquine(these were coming extra at random places where None was present, so removing that as well))
+
+df_new['Intervention_clean']= df_new['Intervention_clean'].astype(str)
+df_new['Intervention_clean']= list(map(lambda x: x.replace('{}','').replace('{','').replace('}','').replace("'",'').replace('Ciclosporin, Chloroquine','').replace('Chloroquine, Ciclosporin','').replace(', ,',',').replace(',,',',').replace('set()','').replace('Chloroquine','').replace('Ciclosporin','').replace('Isoxaflutole',''),df_new['Intervention_clean']))
+df_new['Intervention_clean']= list(map(lambda x: x.strip(),df_new['Intervention_clean']))
+df_new['Intervention_clean']= list(map(lambda x: x.strip(','),df_new['Intervention_clean']))
+
+
+
+
+
+# In[24]:
+# renaming and filtering only the required columns
+df_new.rename(columns={"TrialID": "Trial ID",'Intervention_clean':'Intervention_cleaned','Condition':'Indication', 'Target_size':'# of patients enrolled','web_address':'Reference website','results_date_completed':'Trial Completion Date', 'Processed_Condition':'Processed_Indication'},inplace=True)
+df_new2= df_new[['Trial ID','Primary_sponsor','Secondary_Sponsor','Contact_Affiliation','Source_Support','Study_type','Source_Register','Intervention','Indication','Phase','# of patients enrolled','Trial Completion Date','Country_Name','Reference website','Intervention_cleaned', 'Processed_Indication']]
+
+
+# In[25]:
+#QC-9
+#checking if all the required columns are present after filtering
+df_new2.columns
+
+
+# In[26]:
+#QC-10
+#check if the rows are matching and did not excluded any row while doing the cleaning
+
+print(str(intr_studies)+" is the total rows before cleaning")
+print(str(len(df_new2))+" is the total rows after cleaning")
+
+if len(df_new2) == intr_studies:
+    print("QC-10 is passed")
+else:
+    print("QC-10 is failed")
+
+
+
+# In[27]:
+#saving a csv as a backup if something goes wrong in next steps
+df_new2.to_csv('checkpoint1.csv')
+
+
+# In[28]:
+# checking the word counts for Intervention column
+def word_counts(column_data):
+    # Combine all strings in the column into a single string
+    all_text = ' '.join(column_data)
+    words = all_text.upper().split(', ')
+    word_count = Counter(words)
+    return word_count
+word_count_dict = word_counts(df_new2['Intervention_cleaned'])
+word_count_df = pd.DataFrame(list(word_count_dict.items()), columns=['Word', 'Count'])
+
+#sorting the dataframe with highest number of word count
+word_count_df.sort_values(by=['Count'],ascending=False).head(1000)
+
+#QC-11
+#check the list with word counts and check if We need to clean up something or looks fine
+
+
+# In[29]:
+print("We can drop " +str(len(df_new2[df_new2['Intervention_cleaned']==''])) + " records since these records does not have intervention")
+print("This can be due to these trials can be for Medical devices or confidential Drug codes")
+print("\nIf we dropped records does not have intervention, we will be remaining with records: " +str(len(df_new2[df_new2['Intervention_cleaned']!=''])))
+print("What shall we do???")
+
+# Create a therapy area column based on the potential keywords to the therapy
+start_time = time.time() 
+
+# Define a dictionary mapping therapy areas to keywords (key is therapy area and values are potential keywords)
+therapy_area_keywords = {
+    'Cardiovascular': ['Arteriosclerosis','Veno-occlusive Disease','Central Venous Pressure','Atherosclerotic Lesion(s)','Aorta','Circulatory System','Tachycardia','Ventricular Tachycardia','Sick Sinus Node Syndrome','Fibrillation','Elevated Serum Lipoprotein(a)','Chronic Venous Insufficiency','Venous Stenosis','Cardia_x000D_','Cardiomyopathy','Bradycardia','Ventricular Fibrillation','Cardiometabolic','coronary','Coronary','Hyperlipidemias','Atherosclerotics','Vascular','Hypertriglyceridemia','arterial','Peripheral Arterial Disease','Aortic Stenosis','Hypercholesterolemia','atheroma','aortic','ischaemic heart disease (IHD)','Dyslipidemia','Congestive Heart Failure','Atrial Fibrillation','Cardiovascular','Atherosclerosis','STEMI','NSTEMI','Non-ST elevation Myocardial Infarction','Artery','Coronary Artery Disease','heart','Heart', 'Failure','Cardiac','cardiac','arrest','cardiovascular','hypertension' ,'Hypertension', 'cholesterol', 'blood pressure','MI','Myocardial Infarction'],
+    'Oncology': ['Metastasis','oncology','DLBCL', 'ALL', 'CLL','B Cell NHL','Hodgkin Disease','HCC','Colon Adenoma','Colonic Adenomas','AML','Tumours','Sarcoma','Subependymal Giant Cell Astrocytoma','GIST','Glioblastoma','HNSCC','aNSCLC','SCLC','malignancies','Neuroblastoma','NEUROBLASTOMA','Medulloblastoma','Non-small cell lung cancer','non-small cell lung cancer','NSCLC','Neoplasm','Neoplasms','Metastases','metastatic','cancers','Cholangiocarcinoma','Glioma','Chondrosarcoma','Carcinoma','Adenocarcinoma','adenocarcinoma','Melanoma','melanoma','myeloma','Myeloma','Meningioma','Rhabdomyosarcoma','Hepatoblastoma','Retinoblastoma','Osteosarcoma','Cancer','cancer', 'tumor','Tumor','Tumors', 'carcinoma','Carcinoma' ,'leukemia', 'Leukemia','lymphoma','Lymphoma','Malignant','Myelofibrosis',' Sarcoma'],
+    'Endocrinology': ['Cushings Disease','Hyperaldosteronism','Acromegaly','Exocrine','Diabetes Mellitus','Hypogonadism','Gestational diabetes','GDM','Pre-diabetes','Hormone','hormone','Mellitus','Type 2','hyperglycemia','Insulin resistance','type 2 diabetes mellitus','hyperparathyroidism','Diabetes','diabetes','Type 1 diabetes', 'thyroid', 'insulin', 'metabolism', 'glucose','Endocrine','blood glucose and insulin levels'],
+    'Respiratory': ['Thoracic Insufficiency Syndrome','Chronic Cough','Sinusitis','Bronchiolitis','Bronchiectasis','Sleep Apnea','RHINOSINUSITIS','Throat','Pneumonia','Sleep Apnoea','Acute respiratory failure','Rhinitis','pleural','pleural effusion','asthma', 'copd','COPD', 'lung', 'bronchitis', 'emphysema','Respiratory','Asthma','chronic obstructive pulmonary disease','Chronic Obstructive Pulmonary Disease', 'pulmonary', 'Pulmonary'],
+    'Rheumatology': ['Spinal Cord Injuries','Degenerative Disc Disease;','Polymyalgia Rheumatica','Degenerative lumbar spine disease',"Dupuytren's Disease",'Degenerative Disc Disease',"Paget's Disease of Bone",'Iliotibial Band Syndrome','Scapulocostal Syndrome','Spinal muscular atrophy','Artritis Reumatoide','Ankylosing Spondylitis','knee','Kyphosis','Plantar Fasciitis','Stenosing tenosynovitis','Hallux Valgus','Scoliosis','Talipes Calcaneovalgus','Ankle','Duchenne Muscular Dystrophy','Myasthenia Gravis','Giant Cell Arteritis (GCA)','Microscopic Polyangiitis','Psoriatic Arthritis''knee',"dupuytren's contracture",'Myelodysplastic Syndromes','myelodysplastic syndrome','Osteoporosis','Fibromyalgia','Osteoarthritis','Cutaneous Lupus Erythematosus','Systemic lupus erythematosus','Systemic Lupus Erythematosus','arthritis', 'Rheumatoid','rheumatoid', 'joint','gout', 'Gout','arthritis', 'joint pain', 'musculoskeletal', 'Musculoskeletal','joint inflammation', 'uric acid', 'tophi'],
+    'Neurology': ['Cervical spondylosis myelopathy','Huntington Disease','Cervical Dystonia','Aneurysm','Tourette Syndrome','neuromuscular','Carpal Tunnel Syndrome','Carpal tunnel syndrome','Neurologic','Amyotrophic Lateral Sclerosis','Intracranial Aneurysm','Amyotrophic lateral sclerosis','Spinocerebellar Ataxia','postherpetic neuralgia ','Neurocognitive','Alexander disease','ADHD','Epileptic','pre-eclampsia',"Huntington's disease",'Epilepsy','epilepsy','Seizure','seizure','Seizures','seizures','Spinal cord injury','Migraines','central nervous system',"Subarachnoid Hemorrhage, Aneurysmal",'Motor Neuron','Parkinson','Cerebral Palsy','Dementia',"Alzheimer's disease","Parkinson's disease",'Brain Injuries','Stroke','Traumatic brain injury','neuropathy','Neuropathy','Migraine','Multiple Sclerosis','alzheimer', 'migraine', 'neurological','nerve', 'brain'],
+    'Infectious Diseases': ['Encephalitis','Gonorrhea','Pneumococcal Disease','CMV Colitis','Herpes','Tuberculous','Tinea Pedis','Poliomyelitis','Japanese Encephalitis','Ebola','Leptospirosis','Opisthorchis Viverrini','Candidiasis','Herpes Zoster','Yellow Fever','diarrhea','mucormycosis','Rabies','otitis','Aflatoxicosis','Tuberculosis','Septic Shock','Dengue','Sepsis','Hepatitis B','Hepatitis C','warts','rubella','mumps','measles','SARS-CoV-2','Coronavirus','Covid-19','Covid19','COVID','Infection','Infections','Virus ','Malaria','malaria','infection', 'virus', 'bacteria', 'pathogen', 'antibiotic','Infections','Influenza', 'Aspergillosis','fungal','infectious', 'Infectious'],
+    'Dermatology': ['acne erythema','Pyoderma Gangrenosum','Striae Alba','Alopecia','Rosacea','Melasma','epidermal melasma','Hair Loss','Androgenetic alopecia','Lupus','hyperpigmentation','dysseborrhea','Urticaria','Hidradenitis suppurativa','Psoriasis','psoriasis', 'eczema', 'Dermatitis','dermatitis', 'skin', 'rash'],
+    'Gastroenterology': ['Benign Biliary Stricture','Liver Fibrosis','Colonic Polyps','Colonic Polyp','Achalasia','Liver Dysfunction','Diverticulitis','celiac disease','Gastroesophageal Reflux Disease','Esophagitis','Adenoma, Villous','Liver Cirrhosis','Hepatic fibrosis','Bile Duct Stones','Celiac Disease','Pancreas','Hepatitis','Oesophagus','Severe Acute Alcoholic Hepatitis','Cholangitis','Pancreatic Necrosis','(NASH)','Non Alcoholic Steatohepatitis','Cholestasis','Jaundice','bowel','Crohnâ??s Disease','ulcers','Non Alcoholic Steatohepatitis (NASH)','non-alcoholic steatohepatitis','appendicitis','Cholecystitis','Pancreatic Diseases','Gastro-oesophageal Reflux Disease','GERD','Cholelithiasis','Dysphagia','Bowel ','Constipation','ulcer', 'gastric', 'stomach', 'digestive','Gastrointestinal', 'gastrointestinal','Ulcerative Colitis',"Crohn's Disease",'Crohns disease','Crohn','Enterocolitis',' Liver','Pancreatitis'],
+    'Pain Management': ['Low back pain','Low back bain','Acute pain due to trauma','pelvic girdle pain','Pubic symphysis pain','musculoskeletal pain','patellofemoral pain','Chronic pain','pain', 'analgesic', 'chronic pain', 'nerve pain', 'back pain'],
+    'Ophthalmology': ['Astigmatism','Pterygium','Graves Ophthalmopathy','Corneal Ectasia','Primary Angle Closure','Ocular','Corneal Endothelial Cell Loss','Stargardt Disease 1','visual acuity','Visual Acuity','Keratitis','Conjunctivitis','Blepharitis','Intravitreal','Uveitis','Ocular Surface Cicatrizing Diseases','Intraocular Pressure','macula','Bleeding','Neuromyelitis','Polypoidal Choroidal Vasculopathy','Myopia','Cataract','Bullous Keratopathy','Symptomatic Irreversible Pulpitis (SIP)','Chorioretinal','Keratoconus','Presbyopia','Macular','macular degeneration','retinopathy','eye','Eye', 'vision', 'ophthalmic', 'retina', 'glaucoma','Glaucoma'],
+    'Hematology': ['Erythropoietic Protoporphyria','Sickle Cell Disease','Neutropenia','Thrombocytopaenic','Thromboembolism','Immune Thrombocytopenic Purpura','Hemorrhage','Idiopathic Thrombocytopenic Purpura (ITP)','Aneurysmal Subarachnoid Hemorrhage','Haemophilia','Haemorrhage','Hemorrhagic','Thalassemia','thalassemia','Hemophilia','Thrombocytopenia','thrombocytopenia','Venous Thromboembolism','deep-vein thrombosis','Thrombosis','pulmonary embolism','anemia','Anemia', 'hemophilia', 'blood','Blood' 'platelet', 'coagulation'],
+    'Psychiatry and Psychology': ['Narcolepsy','Autistic Disorder','Schizoaffective Disorder','Panic','Psychotic Disorder','Mental Disorders','Depressive Disorder','Cognitive','delirium','Autism','Dependence','Smoking','Addiction','psychological','Attention-deficit/Hyperactivity Disorder','mental health','obsessive compulsive disorder','Major Depressive Disorder','Intensive Care Unit Syndrome','Tobacco smoking','Smoking Cessation','Nicotine Dependence','Sleep','Post traumatic stress disorder','Psychosis','Mental Health','depression','Depression', 'anxiety','Anxiety', 'psychiatric', 'bipolar', 'Schizophrenia','schizophrenia','insomnia','Insomnia','stress','Stress'],
+    'Urology': ['Diabetic Nephropathies','Prostatic Hyperplasia','BPH',"Peyronie's Disease",'voiding dysfunction of neuropathic etiology','Benign Prostatic Hyperplasia','Arteriovenous fistula maturation','Wilson Disease','Inguinal Hernia','ESRD','Renal','renal','Glomerulonephritis','glomerulonephritis','Chronic Kidney Disease','Lupus Nephritis','kidney','Chronic kidney disease','Benign Prostatic Hyperplasia (BPH)','Overactive Bladder','urinary', 'bladder','Bladder', 'prostate', 'kidney', 'urological', 'Renal Insufficiency', 'Nephropathy'],
+    'Obstetrics': ['Hydatidiform Mole','Female Reproductive Problem','Cervical Dysplasia','Geriatric Disorder','pregnant women','Papanicolaou Smear','Fertility','Reproductive Health','uterovaginal','Frail Elderly Syndrome','Contraceptive','Dysmenorrhoea','ovarian dysfunction','Pregnancy','Preterm labour','Infertility','Adenomyosis','Endometriosis','pregnancy','obstetrics','preelampsia','Pre-Eclampsia','pre-eclampsia','maternity','gestational age determination','fetal development','ultrasonography','prenatal care','maternal health','antenatal','prenatal screening','fetal monitoring','high-risk pregnancy','fetal ultrasound','fetal medicine','Sexual Dysfunction','Erectile Dysfunction','Sexual'],
+    'Dentistry' : ['Dental','Dentoalveolar Abscess','Peri-implant','Peri-Implantitis','Gingivitis','Endodontic','Edentulous','teeth', 'tooth','Teeth','Tooth','Oral','Dental caries'],
+    'Immunology': ['Graft-versus-host-disease','Chronic Graft Versus Host Disease','Sjogrens Disease','Eosinophilic granulomatosis with polyangiitis','Immune','Allergic Disorder','Pemphigus foliaceous','Adverse Reaction','Pemphigus','Acute graft versus host disease','complement system','Anaphylaxis','Allergy','Immunogenicity','immunosuppressive','Immune System Diseases','Immunological','Graft-versus-host Disease (GVHD)','HIV-1','HIV','Human Immunodeficiency Virus','Human immunodeficiency virus [HIV]', 'autoimmune', 'AutoImmune'],
+    'Rare or Genetic Diseases' : ['Tuberous Sclerosis Complex','Down syndrome','SGA', 'Turner Syndrome', 'Noonan Syndrome', 'ISS','phakomatoses','adenoma sebaceum','Epidermolysis Bullosa','Fibrodysplasia Ossificans Progressiva','Chromosome','rare disease', 'orphan disease', 'rare disorder', 'rare condition','(HPP)','Hypophosphatasia','Amyloidosis','Hereditary','Congenital','Mucopolysaccharidosis Type IIIB','Hemoglobinuria, paroxysmal','Paroxysmal Nocturnal Hemoglobinuria','Paroxysmal nocturnal hemoglobinuria [Marchiafava-Micheli]','Hereditary factor VIII deficiency','Hereditary factor IX deficiency','Cystic Fibrosis','Neurofibromatosis',"Prader-Willi Syndrome",'Fragile X Syndrome'],
+    'Metabolic Diseases': ["Pompe's Disease",'Malnutrition','Fabry Disease','Gaucher Disease','Overnutrition','Other diet and nutrition disorders','Mucopolysaccharidosis','diet and nutrition disorders','obese','Poor nutrition','metabolic syndrome','Obesity','Overweight','overweight','Underweight']    
+    # Add more therapy areas and associated keywords as needed
+}
+
+map_to_therapy_area_lambda = lambda condition: next((therapy_area for therapy_area, keywords in therapy_area_keywords.items() if any(keyword.lower().replace(' ','') in condition.lower().replace(' ','') for keyword in keywords)), "Other")
+df_new2['Therapy_Area'] = df_new2['Indication'].apply(map_to_therapy_area_lambda)
+         
+end_time = time.time()
+# Calculate and display the execution time
+print("Execution time:", end_time - start_time, "seconds")
+
+
+#to check for how many rows we could not get the therapy areas
+
+len(df_new2[df_new2['Therapy_Area']=="Other"])
+
+# In[32]:
+#reading the excel with all the Remedica drug list
+
+Remidica_portfolio_df=pd.DataFrame()
+Remidica_portfolio_df= pd.read_excel(r'C:\Users\Sanjaya.Hegde\Downloads\Remedica Drug List_26022024_Final.xlsx',sheet_name='Final List')
+
+Remidica_portfolio_list= Remidica_portfolio_df['Remedica Drug List'].to_list()
+start_count = len(Remidica_portfolio_list)
+Remidica_portfolio_list = list(set([element.upper() for element in Remidica_portfolio_list]))
+unique_count = len(Remidica_portfolio_list)
+
+#QC-12
+#the starting count should be more than or equal to cleaned list
+print("Count of Remedica Drug list at starting: " +str(start_count))
+print("Count of Remedica Drug list after cleaning and removing duplicates: " +str(unique_count))
+
+
+# In[33]:
+
+
+#QC-13
+#this part of code must be running after we complete the exploding the intervention and phases to different rows for filtering purpose
+#have to keep this at laaaaaaast but for now, for the testing purpose we are keeping this here and will remove the columns after checking
+start_time = time.time() 
+
+# Create new columns with default values
+df_new2['Is Remedica Drug present in Intervention'] = 'N'
+df_new2['Remedica Product Matched'] = None
+
+# Iterate through each row in df_new
+for index, row in df_new.iterrows():
+    intervention_names = row['Intervention_cleaned']
+    for generic_name in Remidica_portfolio_list:
+        if generic_name.upper().replace(' ','') in intervention_names.upper().replace(' ',''):
+            df_new2.at[index, 'Is Remedica Drug present in Intervention'] = 'Y'
+            df_new2.at[index, 'Remedica Product Matched'] = generic_name.upper()
+            break 
+                    
+end_time = time.time()
+# Calculate and display the execution time
+print("Execution time:", end_time - start_time, "seconds")
+
+
+# In[34]:
+print("Total number of Trials matched with Remedica Drugs: " +str(len(df_new2[df_new2['Is Remedica Drug present in Intervention']=='Y'])))
+
+
+
+
+
+
+# In[35]:
+
+
+#removing the unwanted columns (we will create these columns seperately in further steps)
+
+df_new3=df_new2.copy()
+df_new3.drop('Is Remedica Drug present in Intervention',axis=1,inplace=True)
+df_new3.drop('Remedica Product Matched',axis=1,inplace=True)
+
+#QC-14
+#check if the 2 column names have been removed
+print(df_new3.columns)
+
+
+# In[36]:
+
+
+#creating columns molecule1 with first intervention name and molecule2 with rest. it was a requirement from the stakeholders
+
+df_new3['molecule1'] = df_new3['Intervention_cleaned'].str.split(',').str[0]
+df_new3['molecule2'] = df_new3['Intervention_cleaned'].apply(lambda x: ','.join(x.split(',')[1:]) if isinstance(x, str) and ',' in x else '')
+
+#QC-15
+#check the molecule 1 and 2 and check if it is created and it is split according to the rules
+df_new3.head()
+
+
+# In[37]:
+
+
+# List of CRO names we collected
+
+df_CRO_Names= pd.read_excel(r'C:\Users\Sanjaya.Hegde\Downloads\CRO_Details_Final (1).xlsx', sheet_name="CRO Details")
+CRO_list = df_CRO_Names['CRO Name'].to_list()
+
+start_count = len(CRO_list)
+CRO_list = list(set([element.upper() for element in CRO_list]))
+unique_count = len(CRO_list)
+
+#QC-18
+#unique_count must be lesser than or equal to start_count
+
+print(start_count)
+print(unique_count)
+
+
+# In[38]:
+
+
+import pandas as pd
+from tqdm import tqdm
+from fuzzywuzzy import fuzz
+
+# Assuming you have already loaded your DataFrame df_new4 and have the CRO_list
+
+start_time = time.time()
+
+def find_matching_item(row):
+    for col in ['Primary_sponsor', 'Secondary_Sponsor', 'Contact_Affiliation', 'Source_Support']:
+        x = row[col]
+        if x is not None:
+            for item in CRO_list:
+                if fuzz.WRatio(item, x) >= 95:  # Adjust the threshold as needed
+                    return item
+    return None
+
+# Apply the function to each row with tqdm for progress
+matching_items_list = []
+with tqdm(total=len(df_new3)) as pbar:
+    for index, row in df_new3.iterrows():
+        matching_items_list.append(find_matching_item(row))
+        pbar.update(1)
+
+# Assign the result to DataFrame
+df_new3['CRO Name'] = matching_items_list
+
+end_time = time.time()
+print("Execution time:", end_time - start_time, "seconds")
+
+
+
+#normalizing the cells by exploding to different rows, which is helpful in filtering functionality in dashboard
+
+df_new3['molecule2_for_filter'] = df_new3['molecule2'].str.split(',')
+df_new3 = df_new3.explode('molecule2_for_filter').reset_index(drop=True)
+df_new3['molecule2_for_filter'] = df_new3['molecule2_for_filter'].str.strip()
+
+df_new3['Phase_for_filter'] = df_new3['Phase'].str.split(',')
+df_new3 = df_new3.explode('Phase_for_filter').reset_index(drop=True)
+df_new3['Phase_for_filter'] = df_new3['Phase_for_filter'].str.strip()
+
+#removing trailing and leading whitespaces
+df_new3['molecule1']= list(map(lambda x: x.strip(),df_new3['molecule1']))
+df_new3['molecule12']= list(map(lambda x: x.strip(),df_new3['molecule2']))
+
+#QC-15
+#check if the phase and molecule2 has been exploded (meaning if there are 2 molecules present, 2 rows must be created with all the other column as same, but molecule2_for_filter should contain separate row for separate molecules)
+df_new3.head()
+
+
+#QC-16
+#this part of code must be running after we complete the exploding the intervention and phases to different rows for filtering purpose
+#have to keep this at laaaaaaast
+start_time = time.time()
+
+df_new3['Is Remedica Drug present in molecule1'] = 'N'
+df_new3['Remedica Product Matched for molecule1'] = None
+# Iterate through each row in df_new
+for index, row in df_new3.iterrows():
+    intervention_names = row['molecule1']
+    for generic_name in Remidica_portfolio_list:
+        if generic_name.upper().replace(' ','') in intervention_names.upper().replace(' ',''):
+            df_new3.at[index, 'Is Remedica Drug present in molecule1'] = 'Y'
+            df_new3.at[index, 'Remedica Product Matched for molecule1'] = generic_name.upper()
+            break 
+            
+df_new3['Is Remedica Drug present in molecule2'] = 'N'
+df_new3['Remedica Product Matched for molecule2'] = None
+for index, row in df_new3.iterrows():
+    intervention_names = row['molecule2_for_filter']
+    for generic_name in Remidica_portfolio_list:
+        if generic_name.upper().replace(' ','') in intervention_names.upper().replace(' ',''):
+            df_new3.at[index, 'Is Remedica Drug present in molecule2'] = 'Y'
+            df_new3.at[index, 'Remedica Product Matched for molecule2'] = generic_name.upper()
+            break
+        
+end_time = time.time()
+# Calculate and display the execution time
+print("Execution time:", end_time - start_time, "seconds")
+
+
+
+#testing
+#testing
+#testing
+start_time = time.time()
+
+df_new3['Is Remedica Drug present in molecule1_=logic'] = 'N'
+df_new3['Remedica Product Matched for molecule1_=logic'] = None
+# Iterate through each row in df_new
+for index, row in df_new3.iterrows():
+    intervention_names = row['molecule1']
+    for generic_name in Remidica_portfolio_list:
+        if generic_name.upper().replace(' ','') == intervention_names.upper().replace(' ',''):
+            df_new3.at[index, 'Is Remedica Drug present in molecule1_=logic'] = 'Y'
+            df_new3.at[index, 'Remedica Product Matched for molecule1_=logic'] = generic_name.upper()
+            break 
+            
+df_new3['Is Remedica Drug present in molecule2_=logic'] = 'N'
+df_new3['Remedica Product Matched for molecule2_=logic'] = None
+for index, row in df_new3.iterrows():
+    intervention_names = row['molecule2_for_filter']
+    for generic_name in Remidica_portfolio_list:
+        if generic_name.upper().replace(' ','') == intervention_names.upper().replace(' ',''):
+            df_new3.at[index, 'Is Remedica Drug present in molecule2_=logic'] = 'Y'
+            df_new3.at[index, 'Remedica Product Matched for molecule2_=logic'] = generic_name.upper()
+            break
+        
+end_time = time.time()
+# Calculate and display the execution time
+print("Execution time:", end_time - start_time, "seconds")
+
+
+
+print("Total entries of Remedica drugs present in Molecule 1 column, after expanding the rows: "+ str(len(df_new3[df_new3['Is Remedica Drug present in molecule1']=='Y'])))
+print("Total entries of Remedica drugs present in Molecule 2 column, after expanding the rows: " +str(len(df_new3[df_new3['Is Remedica Drug present in molecule2']=='Y'])))
+print("Total entries of Remedica drugs present in both Molecule 1 and Molecule 2 column, after expanding the rows: " +str(len(df_new3[(df_new3['Is Remedica Drug present in molecule2'] == 'Y') & (df_new3['Is Remedica Drug present in molecule1'] == 'Y')])))
+print("Total entries of Remedica drugs present in Molecule 2 column, after expanding the rows: " +str(len(df_new3[(df_new3['Is Remedica Drug present in molecule2'] == 'Y') | (df_new3['Is Remedica Drug present in molecule1'] == 'Y')])))
+
+
+#QC-17
+#Number of records before deleting duplicate values, must greater than or equal to number of records afterwards
+
+print(len(df_new3))
+df_new3.drop_duplicates(inplace=True)
+print(len(df_new3))
+
+#saving the checkpoint 3 in download folder for further QC
+df_new3.to_excel('Remedica_Checkpoint3_Mar6.xlsx')
+
+#creating a copy of data for further processing, we can comeback here if something happens in next steps
+df_new4= df_new3.copy()
+
+
+
+# import pandas as pd
+# from collections import Counter
+
+# # Load the Excel file and read the data into a DataFrame
+# df_CRO_Names = pd.read_excel(r'C:\Users\Sanjaya.Hegde\Downloads\Cro_apac_eu.xlsx', sheet_name="Data")
+
+# # Extract the CRO names column and convert it to a list
+# CRO_list = df_CRO_Names['CRO Name'].tolist()
+
+# # Count occurrences of each CRO name
+# cro_counts = Counter(CRO_list)
+
+# # Filter out CRO names that have more than one occurrence
+# duplicate_cros = [cro for cro, count in cro_counts.items() if count > 1]
+
+# print("Duplicate CRO names:")
+# for cro in duplicate_cros:
+#     print(cro)
+
+# # Filter out unique CRO names
+# unique_cros = [cro for cro, count in cro_counts.items() if count == 1]
+
+# print("\nUnique CRO names:")
+# for cro in unique_cros:
+#     print(cro)
+
+
+# In[46]:
+
+
+# #Creating a CRO_Name column by checking 4 columns in dataframe to the list of CRO_Names we have
+# end_time_total = time.time()
+
+# # Calculate and display the Total execution time
+# print("TOTAL Execution time for the pipeline before Fuzzy logic:", end_time_total - start_time_total, "seconds")
+
+# start_time = time.time()
+# def find_matching_item(row):
+#     for col in ['Primary_sponsor', 'Secondary_Sponsor', 'Contact_Affiliation','Source_Support']:
+#         x = row[col]
+#         if x is not None:
+#             matching_items = [item for item in CRO_list if fuzz.WRatio(item, x) >= 88]  # Adjust the threshold as needed
+#             if matching_items:
+#                 return matching_items
+#     return None
+
+# # Apply the function to each row with tqdm for progress
+# matching_items_list = []
+# with tqdm(total=len(df_new4)) as pbar:
+#     for index, row in df_new4.iterrows():
+#         matching_items_list.append(find_matching_item(row))
+#         pbar.update(1)
+
+# # Assign the result to DataFrame
+# df_new4['CRO Name'] = matching_items_list
+
+# end_time = time.time()
+# print("Execution time:", end_time - start_time, "seconds")
+
+
+df_new4['CRO Name']= df_new4['CRO Name'].astype(str)
+df_new4['CRO Name']= list(map(lambda x: x.replace('[]','').replace('[','').replace(']','').replace("'",'').replace("None",''),df_new4['CRO Name']))
+df_new4['CRO Name']= list(map(lambda x: x.strip(),df_new4['CRO Name']))
+df_new4['CRO Name']= list(map(lambda x: x.strip(','),df_new4['CRO Name']))
+
+start_time = time.time()
+# African Region
+region_AFRO = {
+    'African Region': [
+        'Algeria', 'Angola', 'Benin', 'Botswana', 'Burkina Faso', 'Burundi',
+        'Cabo Verde', 'Cameroon', 'Central African Republic', 'Chad', 'Congo',
+        "Cote D'Ivoire", 'Democratic Republic of the Congo', 'Equatorial Guinea',
+        'Eritrea', 'Ethiopia', 'Gabon', 'Gambia', 'Ghana', 'Guinea',
+        'Guinea-Bissau', 'Kenya', 'Lesotho', 'Liberia', 'Madagascar', 'Malawi',
+        'Mali', 'Mauritania', 'Mauritius', 'Mozambique', 'Namibia', 'Niger',
+        'Nigeria', 'Rwanda', 'Sao Tome and Principe', 'Senegal', 'Seychelles',
+        'Sierra Leone', 'South Africa', 'South Sudan', 'Swaziland', 'Togo',
+        'Uganda', 'United Republic of Tanzania', 'Zambia', 'Zimbabwe'
+    ]
+}
+# Americas Region
+region_AMRO = {
+    'Americas Region': [
+        'American Samoa', 'Antigua and Barbuda', 'Argentina', 'Bahamas', 'Barbados',
+        'Belize', 'Bolivia (Plurinational States of)', 'Brazil', 'Canada', 'Chile',
+        'Colombia', 'Costa Rica', 'Cuba', 'Dominica', 'Dominican Republic', 'Ecuador',
+        'El Salvador', 'Grenada', 'Guatemala', 'Guyana', 'Haiti', 'Honduras', 'Jamaica',
+        'Mexico', 'Nicaragua', 'Panama', 'Paraguay', 'Peru', 'Puerto Rico',
+        'Saint Kitts and Nevis', 'Saint Lucia', 'Saint Vincent and the Grenadines',
+        'Suriname', 'Trinidad and Tobago', 'United States of America', 'Uruguay',
+        'Venezuela (Bolivarian Republic of)'
+    ]
+}
+# Eastern Mediterranean Region
+region_EMRO = {
+    'Eastern Mediterranean Region': [
+        'Afghanistan', 'Bahrain', 'Djibouti', 'Egypt', 'Iran (Islamic Republic of)',
+        'Iraq', 'Jordan', 'Kuwait', 'Lebanon', 'Libya', 'Morocco', 'Oman', 'Pakistan',
+        'Qatar', 'Saudi Arabia', 'Somalia', 'Sudan', 'Syrian Arab Republic',
+        'Tunisia', 'United Arab Emirates', 'Yemen'
+    ]
+}
+# European Region
+region_EURO = {
+    'European Region': [
+        'Albania', 'Andorra', 'Armenia', 'Austria', 'Azerbaijan', 'Belarus',
+        'Belgium', 'Bosnia and Herzegovina', 'Bulgaria', 'Croatia', 'Cyprus',
+        'Czech Republic', 'Denmark', 'Estonia', 'Finland', 'France', 'Georgia',
+        'Germany', 'Greece', 'Guadeloupe', 'Hungary', 'Iceland', 'Ireland',
+        'Israel', 'Italy', 'Kazakhstan', 'Kyrgyzstan', 'Latvia', 'Lithuania',
+        'Luxembourg', 'Malta', 'Martinique', 'Monaco', 'Montenegro', 'Netherlands',
+        'Norway', 'Poland', 'Portugal', 'Republic of Moldova', 'Reunion', 'Romania',
+        'Russian Federation', 'Serbia', 'Slovakia', 'Slovenia', 'Spain', 'Sweden',
+        'Switzerland', 'Tajikistan', 'The former Yugoslav Republic of Macedonia',
+        'Türkiye', 'Turkmenistan', 'Ukraine', 'United Kingdom', 'Uzbekistan'
+    ]
+}
+# South-East Asia Region
+region_SEARO = {
+    'South-East Asia Region': [
+        'Bangladesh', 'Bhutan', "Democratic People's Republic of Korea", 'India',
+        'Indonesia', 'Maldives', 'Myanmar', 'Nepal', 'Sri Lanka', 'Thailand',
+        'Timor-Leste'
+    ]
+}
+# Western Pacific Region
+region_WPRO = {
+    'Western Pacific Region': [
+        'Australia', 'Brunei Darussalam', 'Cambodia', 'China', 'China (Province of Taiwan)',
+        'China, Hong Kong SAR', 'Cook Islands', 'Fiji', 'Japan', 'Kiribati',
+        "Lao People's Democratic Republic", 'Malaysia', 'Marshall Islands',
+        'Micronesia (Federated States of)', 'Mongolia', 'Nauru', 'New Zealand', 'Niue',
+        'Palau', 'Papua New Guinea', 'Philippines', 'Republic of Korea', 'Samoa',
+        'Singapore', 'Solomon Islands', 'Tonga', 'Tuvalu', 'Vanuatu', 'Viet Nam'
+    ]
+}
+
+all_regions = {**region_AFRO, **region_AMRO, **region_EMRO, **region_EURO, **region_SEARO, **region_WPRO}
+def map_country_to_region(country):
+    for region, countries in all_regions.items():
+        if country in countries:
+            return region
+    return 'Unknown'  # If no country found in any region, printing 'Unknown'
+# Apply the function to create the 'Region' column
+df_new4['Region'] = df['Country_Name'].apply(map_country_to_region)
+
+end_time = time.time()
+print("Execution time:", end_time - start_time, "seconds")
+
+
+#save the final file to excel
+df_new4.to_excel(r'C:\Users\Sanjaya.Hegde\Downloads\Remedica_Checkpoint4_Mar6_fuzzy90.xlsx')
+
+
+end_time_total2 = time.time()
+
+# Calculate and display the Total execution time
+Total_time_for_code= end_time_total2 - start_time_total
+print("TOTAL Execution time for the pipeline:", end_time_total2 - start_time_total, "seconds")
+
+
+
+#sending email to respective person with the attachment 
+
+outlook = win32com.client.Dispatch('outlook.application')
+mail = outlook.CreateItem(0)
+mail.To = 'sanjaya.hegde@mu-sigma.com'
+mail.Subject = 'Pipeline Ran successfully | Remedica_WHO'
+mail.Body = '''Hi Sanjay,\nThis email is to inform you that, your python script ran successfully in ''' +str(Total_time_for_code)+''' seconds. Please find the output file in path: C:\\Users\\Sanjaya.Hegde\\Downloads\\Remedica_Checkpoint4_Mar6_fuzzy90.xlsx \n\nThanks and Regards,\nSanjaya Hegde'''
+
+# Add attachment - Disclaimer: we can not send the atachment since the file is too large (XD)
+try:
+    attachment = r"C:\Users\Sanjaya.Hegde\Downloads\Remedica_Checkpoint4_Mar6_fuzzy90.xlsx" 
+    mail.Attachments.Add(attachment)
+except Exception as e:
+    print("File not found or the size of the file is too large")
+    print("Exact error: "+ str(e))
+
+# Send the email
+mail.Send()
+
+df_new4['CRO Name'] = df_new4['CRO Name'].fillna('')
+
+
+a= df_new4[df_new4['CRO Name']!=""]
+len(a)
+
+
+df_new4.columns
+
+df_new4['CRO Name']=df_new4['CRO Name'].astype(str)
+print(len(df_new4['CRO Name'].unique()))
+df_new4['CRO Name'].unique()
+df_CRO_Names.columns
+
+
+df_CRO_Names['Global_Region']=df_CRO_Names['Global_Region'].astype(str)
+df_CRO_Names['Global_Region'] = df_CRO_Names['Global_Region'].str.split(',')
+df_CRO_Names = df_CRO_Names.explode('Global_Region').reset_index(drop=True)
+df_CRO_Names['Global_Region'] = df_CRO_Names['Global_Region'].str.strip()
+
+df_CRO_Names['Region']=df_CRO_Names['Region'].astype(str)
+df_CRO_Names['Region'] = df_CRO_Names['Region'].str.split(',')
+df_CRO_Names = df_CRO_Names.explode('Region').reset_index(drop=True)
+df_CRO_Names['Region'] = df_CRO_Names['Region'].str.strip()
+df_CRO_Names.to_excel(r'C:\Users\Sanjaya.Hegde\Downloads\Exploded_GlobalRegion_For Avinash.xlsx')
+
+df_new4['Phase_for_filter']= list(map(lambda x: x.replace('Not applicable','Not Applicable'),df_new4['Phase_for_filter']))
+
+print(len(df_new4['Phase_for_filter'].unique()))
+df_new4['Phase_for_filter'].unique()
+df_new4.columns
+
+
+# # check columns and run
+df_new4['molecule1_for_filter']=df_new4['molecule1']
+df_new4= df_new4[['Trial ID','CRO Name','Primary_sponsor','Secondary_Sponsor','Contact_Affiliation','Source_Support','Source_Register','Intervention','Intervention_cleaned','molecule1','molecule2','Indication','Processed_Indication','Therapy_Area','Phase','Phase_for_filter','# of patients enrolled','Trial Completion Date','Country_Name','Region','Reference website','molecule1_for_filter','molecule2_for_filter','Is Remedica Drug present in molecule1','Remedica Product Matched for molecule1','Is Remedica Drug present in molecule2','Remedica Product Matched for molecule2','Is Remedica Drug present in molecule1_=logic','Remedica Product Matched for molecule1_=logic','Is Remedica Drug present in molecule2_=logic','Remedica Product Matched for molecule2_=logic']]
+sorted_df = df_new4.sort_values(by=['CRO Name'], ascending=True)
+
+
+#save the final file to excel
+
+sorted_df.to_excel(r'C:\Users\Sanjaya.Hegde\Downloads\Remedica_Checkpoint4_Mar6_SortedForQC.xlsx')
+
+
+a= len(df_new4[df_new4['Processed_Indication']!='Health Condition is not found'])
+b= len(df_new4[df_new4['Processed_Indication']=='Health Condition is not found'])
+print(a)
+print(b)
+c= 100-(((b+3000)/(a+b))*100)
+
+print("Processed_Condition is around " +str(c) +"% accurate")
+
+
+
+
+a= len(df_new4[df_new4['Therapy_Area']!='Other'])
+b= len(df_new4[df_new4['Therapy_Area']=='Other'])
+
+c= 100-(((b+3000)/(a+b))*100)
+print("Therapy_Area is around " +str(c) +"% accurate")
+
+
+
+# checking the word counts for Intervention column
+
+def word_counts(column_data):
+    # Combine all strings in the column into a single string
+    all_text = ', '.join(column_data)
+    words = all_text.upper().split(', ')
+    word_count = Counter(words)
+#     print(all_text)
+    return word_count
+word_count_dict = word_counts(df_new4['CRO Name'])
+word_count_df = pd.DataFrame(list(word_count_dict.items()), columns=['Word', 'Count'])
+
+#sorting the dataframe with highest number of word count
+word_count_df.sort_values(by=['Count'],ascending=False).head(10000)
+
+
+print(len(df_new4['CRO Name'].unique()))
+word_count_df
